@@ -36,5 +36,8 @@ jobs:
       - name: Process detected filings
         run: python run_processor.py
 
+      - name: Backfill missing Storage paths
+        run: python run_backfill.py
+
       - name: List detected filings
         run: python list_filings.py
