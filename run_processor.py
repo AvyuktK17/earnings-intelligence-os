@@ -5,27 +5,48 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from src.process_detected_filings import process_detected_filings
 
+BATCH_SIZE = 3
+
 
 def main():
-    print("Processing one detected filing...\n")
-    results = process_detected_filings(limit=1)
+    print(f"Processing up to {BATCH_SIZE} detected filings...\n")
+    results = process_detected_filings(limit=BATCH_SIZE)
 
     if not results:
         print("No filings with status 'detected' were found.")
         return
 
-    for r in results:
-        print(f"  Ticker           : {r['ticker']}")
-        print(f"  Accession number : {r['accession_number']}")
-        print(f"  Status           : {r['status']}")
+    col = "{:<6} {:<28} {:<8} {:<42} {:<42}"
+    header = col.format("Ticker", "Accession Number", "Status", "HTML Storage Path", "Text Storage Path")
+    print(header)
+    print("-" * len(header))
 
+    for r in results:
         if r["status"] == "parsed":
-            print(f"  HTML path        : {r['html_path']}")
-            print(f"  Text path        : {r['text_path']}")
-            print(f"  HTML size        : {r['html_size_bytes']:,} bytes")
-            print(f"  Text size        : {r['text_size_bytes']:,} bytes")
-        elif r["status"] == "failed":
-            print(f"  Error            : {r['error_message']}")
+            print(col.format(
+                r["ticker"],
+                r["accession_number"],
+                r["status"],
+                r.get("html_storage_path", ""),
+                r.get("text_storage_path", ""),
+            ))
+        else:
+            print(col.format(
+                r["ticker"],
+                r["accession_number"],
+                r["status"],
+                "",
+                "",
+            ))
+            print(f"  ERROR: {r.get('error_message', 'unknown error')}")
+
+    parsed_count = sum(1 for r in results if r["status"] == "parsed")
+    failed_count = sum(1 for r in results if r["status"] == "failed")
+
+    print()
+    print(f"Filings processed : {len(results)}")
+    print(f"Parsed            : {parsed_count}")
+    print(f"Failed            : {failed_count}")
 
 
 if __name__ == "__main__":
