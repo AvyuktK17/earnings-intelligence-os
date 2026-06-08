@@ -21,6 +21,7 @@ def mark_filing_downloaded(accession_number: str) -> dict:
             {
                 "processing_status": "downloaded",
                 "downloaded_at": now,
+                "processing_error": None,
             }
         )
         .eq("accession_number", accession_number)
@@ -48,6 +49,34 @@ def mark_filing_parsed(accession_number: str) -> dict:
             {
                 "processing_status": "parsed",
                 "parsed_at": now,
+                "processing_error": None,
+            }
+        )
+        .eq("accession_number", accession_number)
+        .execute()
+    )
+
+    return response.data[0]
+
+
+def mark_filing_failed(accession_number: str, error_message: str) -> dict:
+    """Mark a filing as failed and store the error message.
+
+    Args:
+        accession_number: The filing's unique accession number.
+        error_message: Description of what went wrong.
+
+    Returns:
+        The updated row from the filings table.
+    """
+    supabase = get_supabase_client()
+
+    response = (
+        supabase.table("filings")
+        .update(
+            {
+                "processing_status": "failed",
+                "processing_error": error_message,
             }
         )
         .eq("accession_number", accession_number)
