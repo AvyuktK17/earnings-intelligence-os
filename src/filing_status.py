@@ -21,6 +21,7 @@ def mark_filing_downloaded(accession_number: str) -> dict:
             {
                 "processing_status": "downloaded",
                 "downloaded_at": now,
+                "chunked_at": None,
                 "processing_error": None,
             }
         )
@@ -49,6 +50,7 @@ def mark_filing_parsed(accession_number: str) -> dict:
             {
                 "processing_status": "parsed",
                 "parsed_at": now,
+                "chunked_at": None,
                 "processing_error": None,
             }
         )
@@ -82,6 +84,34 @@ def record_filing_storage_paths(
             {
                 "html_storage_path": html_storage_path,
                 "text_storage_path": text_storage_path,
+            }
+        )
+        .eq("accession_number", accession_number)
+        .execute()
+    )
+
+    return response.data[0]
+
+
+def mark_filing_chunked(accession_number: str) -> dict:
+    """Mark a filing as chunked and record the timestamp.
+
+    Args:
+        accession_number: The filing's unique accession number.
+
+    Returns:
+        The updated row from the filings table.
+    """
+    supabase = get_supabase_client()
+    now = datetime.now(timezone.utc).isoformat()
+
+    response = (
+        supabase.table("filings")
+        .update(
+            {
+                "processing_status": "chunked",
+                "chunked_at": now,
+                "processing_error": None,
             }
         )
         .eq("accession_number", accession_number)

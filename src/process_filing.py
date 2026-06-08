@@ -2,8 +2,9 @@ import os
 
 from src.filing_downloader import download_filing
 from src.filing_parser import extract_filing_text
-from src.filing_status import mark_filing_downloaded, mark_filing_parsed, record_filing_storage_paths
+from src.filing_status import mark_filing_downloaded, mark_filing_parsed, mark_filing_chunked, record_filing_storage_paths
 from src.storage import upload_file
+from src.filing_chunker import chunk_and_store_filing
 
 
 def process_filing(filing: dict) -> dict:
@@ -45,17 +46,22 @@ def process_filing(filing: dict) -> dict:
     record_filing_storage_paths(accession_number, html_storage_path, text_storage_path)
     mark_filing_parsed(accession_number)
 
+    chunk_result = chunk_and_store_filing(accession_number)
+    mark_filing_chunked(accession_number)
+
     html_size = os.path.getsize(html_path)
     text_size = os.path.getsize(text_path)
 
     return {
         "ticker": filing["ticker"],
         "accession_number": accession_number,
-        "status": "parsed",
+        "status": "chunked",
         "html_path": html_path,
         "text_path": text_path,
         "html_size_bytes": html_size,
         "text_size_bytes": text_size,
         "html_storage_path": html_storage_path,
         "text_storage_path": text_storage_path,
+        "chunk_count": chunk_result["chunk_count"],
+        "average_chunk_characters": chunk_result["average_chunk_characters"],
     }

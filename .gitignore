@@ -4,3 +4,4 @@ __pycache__/
 .claude/
 data/raw_filings/
 data/parsed_filings/
+data/chunking_inputs/
