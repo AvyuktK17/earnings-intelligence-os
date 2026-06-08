@@ -2,3 +2,5 @@
 .venv/
 __pycache__/
 .claude/
+data/raw_filings/
+data/parsed_filings/
