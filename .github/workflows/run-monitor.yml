@@ -39,5 +39,8 @@ jobs:
       - name: Backfill missing Storage paths
         run: python run_backfill.py
 
+      - name: Backfill missing chunks
+        run: python run_chunk_backfill.py
+
       - name: List detected filings
         run: python list_filings.py
