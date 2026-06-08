@@ -67,20 +67,30 @@ Return a JSON array of claim objects. Each object must have:
   theme, claim_text, supporting_excerpt, source_chunk_index, claim_type, confidence"""
 
 
-def extract_and_store_claims(accession_number: str, max_claims: int = 3) -> dict:
+def extract_and_store_claims(
+    accession_number: str,
+    max_claims: int = 3,
+    document_key: str | None = None,
+) -> dict:
     """Extract structured claims from a chunked filing and store them for review.
 
     Args:
         accession_number: The filing's unique accession number.
         max_claims: Maximum number of claims to request from Gemini.
+        document_key: Filter chunks to this document_key (e.g.
+            ``"primary"`` or ``"exhibit:avgo-05032026x8kxex99.htm"``).
+            Defaults to ``"primary"`` when omitted.
 
     Returns:
-        A dict with ticker, accession_number, proposed_claim_count,
-        skipped_invalid_count, and proposed_claims.
+        A dict with ticker, accession_number, document_key,
+        proposed_claim_count, skipped_invalid_count, and proposed_claims.
 
     Raises:
         ValueError: If the filing is not found, not chunked, or all claims are invalid.
     """
+    if document_key is None:
+        document_key = "primary"
+
     supabase = get_supabase_client()
 
     filing_response = (
@@ -106,10 +116,16 @@ def extract_and_store_claims(accession_number: str, max_claims: int = 3) -> dict
         supabase.table("filing_chunks")
         .select("chunk_index, chunk_text")
         .eq("accession_number", accession_number)
+        .eq("document_key", document_key)
         .order("chunk_index")
         .execute()
     )
     chunks = chunks_response.data
+    if not chunks:
+        raise ValueError(
+            f"No chunks found for accession_number={accession_number!r} "
+            f"with document_key={document_key!r}."
+        )
     chunk_map = {row["chunk_index"]: row["chunk_text"] for row in chunks}
 
     # Call Gemini with structured output
@@ -157,10 +173,10 @@ def extract_and_store_claims(accession_number: str, max_claims: int = 3) -> dict
             "No claims were saved."
         )
 
-    # Delete existing pending claims for this accession number (safe to rerun)
+    # Delete existing pending claims for this accession+document_key (safe to rerun)
     supabase.table("proposed_claims").delete().eq(
         "accession_number", accession_number
-    ).eq("review_status", "pending").execute()
+    ).eq("document_key", document_key).eq("review_status", "pending").execute()
 
     # Insert valid claims
     rows = [
@@ -168,6 +184,7 @@ def extract_and_store_claims(accession_number: str, max_claims: int = 3) -> dict
             "filing_id": filing_id,
             "ticker": ticker,
             "accession_number": accession_number,
+            "document_key": document_key,
             "theme": c["theme"],
             "claim_text": c["claim_text"],
             "supporting_excerpt": _normalize_ws(c["supporting_excerpt"]),
@@ -183,6 +200,7 @@ def extract_and_store_claims(accession_number: str, max_claims: int = 3) -> dict
     return {
         "ticker": ticker,
         "accession_number": accession_number,
+        "document_key": document_key,
         "proposed_claim_count": len(valid_claims),
         "skipped_invalid_count": skipped,
         "proposed_claims": valid_claims,
