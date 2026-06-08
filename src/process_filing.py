@@ -2,7 +2,8 @@ import os
 
 from src.filing_downloader import download_filing
 from src.filing_parser import extract_filing_text
-from src.filing_status import mark_filing_downloaded, mark_filing_parsed
+from src.filing_status import mark_filing_downloaded, mark_filing_parsed, record_filing_storage_paths
+from src.storage import upload_file
 
 
 def process_filing(filing: dict) -> dict:
@@ -35,6 +36,13 @@ def process_filing(filing: dict) -> dict:
     mark_filing_downloaded(accession_number)
 
     extract_filing_text(html_path, text_path)
+
+    html_storage_path = f"html/{ticker}/{accession_number}.html"
+    text_storage_path = f"parsed/{ticker}/{accession_number}.txt"
+
+    upload_file(html_path, html_storage_path)
+    upload_file(text_path, text_storage_path)
+    record_filing_storage_paths(accession_number, html_storage_path, text_storage_path)
     mark_filing_parsed(accession_number)
 
     html_size = os.path.getsize(html_path)
@@ -48,4 +56,6 @@ def process_filing(filing: dict) -> dict:
         "text_path": text_path,
         "html_size_bytes": html_size,
         "text_size_bytes": text_size,
+        "html_storage_path": html_storage_path,
+        "text_storage_path": text_storage_path,
     }
