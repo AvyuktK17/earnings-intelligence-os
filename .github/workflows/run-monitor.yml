@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: "17 */6 * * *"
 
+concurrency:
+  group: sec-filing-monitor
+  cancel-in-progress: false
+
 jobs:
   run-monitor:
     runs-on: ubuntu-latest
@@ -28,6 +32,9 @@ jobs:
 
       - name: Run filing monitor
         run: python run_monitor.py
+
+      - name: Process detected filings
+        run: python run_processor.py
 
       - name: List detected filings
         run: python list_filings.py
