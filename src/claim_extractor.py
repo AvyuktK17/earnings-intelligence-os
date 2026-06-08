@@ -114,7 +114,7 @@ def extract_and_store_claims(
 
     chunks_response = (
         supabase.table("filing_chunks")
-        .select("chunk_index, chunk_text")
+        .select("id, chunk_index, chunk_text")
         .eq("accession_number", accession_number)
         .eq("document_key", document_key)
         .order("chunk_index")
@@ -127,6 +127,7 @@ def extract_and_store_claims(
             f"with document_key={document_key!r}."
         )
     chunk_map = {row["chunk_index"]: row["chunk_text"] for row in chunks}
+    chunk_id_map = {row["chunk_index"]: row["id"] for row in chunks}
 
     # Call Gemini with structured output
     client = get_gemini_client()
@@ -189,6 +190,7 @@ def extract_and_store_claims(
             "claim_text": c["claim_text"],
             "supporting_excerpt": _normalize_ws(c["supporting_excerpt"]),
             "source_chunk_index": c["source_chunk_index"],
+            "source_chunk_id": chunk_id_map[c["source_chunk_index"]],
             "claim_type": c["claim_type"],
             "confidence": c["confidence"],
             "review_status": "pending",
