@@ -64,7 +64,8 @@ fail closed with a generic `500` (`Server configuration error.`). There are
 no user accounts yet.
 
 **Public (GET, no token):** `/health`, `/companies`, `/filings`,
-`/filings/{accession_number}`, `/briefs/latest/{ticker}`, `/review-queue`.
+`/filings/{accession_number}`, `/briefs/latest/{ticker}`, `/review-queue`,
+`/extraction-ready`.
 
 **Protected (POST, token required):** `/review-queue/{id}/approve`,
 `/review-queue/{id}/edit`, `/review-queue/{id}/reject`, `/claims/promote`,
@@ -84,13 +85,37 @@ to a filing.
 cik, business_model) ordered by ticker; the dashboard's filings filter is
 populated from it.
 
+`GET /extraction-ready` lists filings whose earnings-release exhibit has
+been ingested and chunked — the queue for the manual AI claim-extraction
+step. The API itself never triggers extraction.
+
+### Automated exhibit ingestion
+
+A scheduled worker (`run_exhibit_processor.py`, also a GitHub Actions step)
+checks up to 3 chunked 8-K filings per run for an earnings-release exhibit
+(EX-99.1 style), downloads/parses/uploads it, chunks it, and records the
+outcome on the filing row. The exhibit status lifecycle is:
+
+- `not_checked` — default; the worker has not inspected the filing yet
+- `processed` — exhibit ingested and chunked; `earnings_release_document_id`
+  points at the `filing_documents` row
+- `not_found` — the 8-K has no likely earnings-release exhibit (never
+  rechecked automatically)
+- `failed` — last attempt errored; the error is stored and the filing is
+  retried only with `process_pending_exhibits(include_failed=True)`
+
+Gemini claim extraction remains a deliberate manual step (free-quota
+control and analyst oversight) — the worker and the deployed API never
+call AI.
+
 ### CLI utilities
 
 ```bash
-python run_monitor.py        # check EDGAR for new filings
-python list_filings.py       # list stored filings
-python review_claims.py      # interactive claim review
-python promote_claims.py     # promote reviewed claims
+python run_monitor.py            # check EDGAR for new filings
+python run_exhibit_processor.py  # ingest earnings-release exhibits (max 3)
+python list_filings.py           # list stored filings
+python review_claims.py          # interactive claim review
+python promote_claims.py         # promote reviewed claims
 ```
 
 ## Frontend setup
@@ -112,6 +137,7 @@ only to the FastAPI service — never directly to Supabase.
 | `/` | Overview: summary cards + latest filings |
 | `/filings` | Filing feed with ticker/status/limit filters |
 | `/filings/[accessionNumber]` | Filing detail, documents, chunk count |
+| `/extraction-ready` | Ingested + chunked earnings-release exhibits awaiting manual extraction |
 | `/review-queue` | Approve / edit / reject grounded pending claims; scoped promotion |
 | `/briefs/latest/[ticker]` | Latest stored brief with markdown rendering and version generation |
 

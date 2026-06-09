@@ -14,8 +14,11 @@ if not _USER_AGENT:
 
 _TIMEOUT_SECONDS = 15
 
+# "pr" before the extension catches press-release names like q1fy27pr.htm
+# (NVIDIA's convention), which carry no ex-99/earnings marker.
 _EARNINGS_FILENAME_PATTERNS = re.compile(
-    r"(ex[_\-]?99|exhibit[_\-]?99|xex99|99[_\-]1|earnings|press[_\-]?release|results)",
+    r"(ex[_\-]?99|exhibit[_\-]?99|xex99|99[_\-]1|earnings|press[_\-]?release|"
+    r"results|pr\.html?$)",
     re.IGNORECASE,
 )
 

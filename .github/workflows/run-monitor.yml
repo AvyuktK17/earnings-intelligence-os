@@ -36,6 +36,9 @@ jobs:
       - name: Process detected filings
         run: python run_processor.py
 
+      - name: Process earnings-release exhibits
+        run: python run_exhibit_processor.py
+
       - name: Backfill missing Storage paths
         run: python run_backfill.py
 

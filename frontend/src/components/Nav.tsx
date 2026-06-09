@@ -7,6 +7,7 @@ import AdminAccess from "@/components/AdminAccess";
 const LINKS = [
   { href: "/", label: "Overview" },
   { href: "/filings", label: "Filings" },
+  { href: "/extraction-ready", label: "Extraction Ready" },
   { href: "/review-queue", label: "Review Queue" },
   { href: "/briefs/latest/AVGO", label: "Latest Brief" },
 ];
@@ -49,7 +50,7 @@ export default function Nav() {
       </nav>
       <AdminAccess />
       <div className="px-4 py-3 border-t border-edge text-[11px] text-faint font-mono">
-        local · read API + analyst actions
+        live · SEC ingestion + analyst review
       </div>
     </aside>
   );

@@ -121,6 +121,25 @@ export interface ReviewQueueResponse {
   claims: ProposedClaim[];
 }
 
+export interface ExtractionReadyFiling {
+  filing_id: number;
+  ticker: string;
+  accession_number: string;
+  form: string;
+  filing_date: string | null;
+  exhibit_processing_status: string;
+  earnings_release_document_id: number;
+  filename: string | null;
+  document_key: string | null;
+  chunk_count: number;
+  ready_for_extraction: boolean;
+}
+
+export interface ExtractionReadyResponse {
+  count: number;
+  filings: ExtractionReadyFiling[];
+}
+
 export interface PromotionResult {
   eligible_count: number;
   promoted_count: number;
@@ -224,6 +243,10 @@ export const api = {
 
   getReviewQueue() {
     return request<ReviewQueueResponse>("/review-queue");
+  },
+
+  getExtractionReady() {
+    return request<ExtractionReadyResponse>("/extraction-ready");
   },
 
   approveClaim(claimId: number, reviewerNotes?: string) {

@@ -5,6 +5,7 @@ import {
   api,
   ApiError,
   type Brief,
+  type ExtractionReadyResponse,
   type FilingsResponse,
   type ReviewQueueResponse,
 } from "@/lib/api";
@@ -14,6 +15,8 @@ import { ErrorBox, Loading, Panel, StatCard } from "@/components/Panel";
 export default function OverviewPage() {
   const [filings, setFilings] = useState<FilingsResponse | null>(null);
   const [queue, setQueue] = useState<ReviewQueueResponse | null>(null);
+  const [extractionReady, setExtractionReady] =
+    useState<ExtractionReadyResponse | null>(null);
   const [brief, setBrief] = useState<Brief | null>(null);
   const [briefMissing, setBriefMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,13 +27,16 @@ export default function OverviewPage() {
 
     async function load() {
       try {
-        const [filingsData, queueData] = await Promise.all([
-          api.getFilings({ limit: 25 }),
-          api.getReviewQueue(),
-        ]);
+        const [filingsData, queueData, extractionReadyData] =
+          await Promise.all([
+            api.getFilings({ limit: 25 }),
+            api.getReviewQueue(),
+            api.getExtractionReady(),
+          ]);
         if (cancelled) return;
         setFilings(filingsData);
         setQueue(queueData);
+        setExtractionReady(extractionReadyData);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load data.");
@@ -59,10 +65,6 @@ export default function OverviewPage() {
     };
   }, []);
 
-  const chunkedCount =
-    filings?.filings.filter((f) => f.processing_status === "chunked").length ??
-    0;
-
   return (
     <div className="space-y-5">
       <header>
@@ -84,9 +86,9 @@ export default function OverviewPage() {
               hint="latest feed (limit 25)"
             />
             <StatCard
-              label="Chunked filings"
-              value={chunkedCount}
-              hint="of recent filings shown"
+              label="Extraction-ready filings"
+              value={extractionReady?.count ?? 0}
+              hint="exhibits ingested and chunked"
             />
             <StatCard
               label="Pending grounded claims"

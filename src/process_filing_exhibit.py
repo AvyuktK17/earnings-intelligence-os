@@ -26,9 +26,9 @@ def process_earnings_release_exhibit(accession_number: str) -> dict:
         accession_number: The filing's unique accession number.
 
     Returns:
-        A dict with filing_id, ticker, accession_number, document_type,
-        filename, sec_url, html_storage_path, text_storage_path,
-        html_size_bytes, and text_size_bytes.
+        A dict with filing_document_id, filing_id, ticker, accession_number,
+        document_type, filename, sec_url, html_storage_path,
+        text_storage_path, html_size_bytes, and text_size_bytes.
 
     Raises:
         ValueError: If the filing is not found or no earnings-release exhibit
@@ -91,10 +91,27 @@ def process_earnings_release_exhibit(accession_number: str) -> dict:
         on_conflict="accession_number,filename",
     ).execute()
 
+    # Read the row id back rather than trusting the upsert response, so both
+    # the insert and the duplicate-update paths return the same stable id.
+    document_response = (
+        supabase.table("filing_documents")
+        .select("id")
+        .eq("accession_number", accession_number)
+        .eq("filename", filename)
+        .execute()
+    )
+    if not document_response.data:
+        raise ValueError(
+            f"filing_documents row missing after upsert for "
+            f"accession_number={accession_number!r}, filename={filename!r}."
+        )
+    filing_document_id = document_response.data[0]["id"]
+
     html_size = os.path.getsize(html_local)
     text_size = os.path.getsize(text_local)
 
     return {
+        "filing_document_id": filing_document_id,
         "filing_id": filing_id,
         "ticker": ticker,
         "accession_number": accession_number,

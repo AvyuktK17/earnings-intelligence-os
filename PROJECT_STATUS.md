@@ -27,7 +27,7 @@ Build an Earnings Intelligence OS for semiconductor companies:
 
 * `companies` — ticker → company_name watchlist
 * `financial_metrics`
-* `filings` — one row per detected filing; lifecycle status, Storage paths, timestamps, processing_error
+* `filings` — one row per detected filing; lifecycle status, Storage paths, timestamps, processing_error; exhibit columns: `exhibit_processing_status` (`not_checked` / `processed` / `not_found` / `failed`, default `not_checked`), `exhibit_checked_at`, `exhibit_processing_error`, `earnings_release_document_id` → `filing_documents(id)`
 * `filing_documents` — exhibit documents (e.g. EX-99.1) per filing; unique on `(accession_number, filename)`
 * `filing_chunks` — AI-ready chunks; unique on `(accession_number, document_key, chunk_index)`; primary chunks use `document_key = "primary"`, exhibit chunks use `document_key = "exhibit:{filename}"`
 * `proposed_claims` — AI-drafted claims awaiting review; `review_status` is `pending` / `approved` / `edited` / `rejected`; grounded rows have `source_chunk_id`
@@ -50,9 +50,11 @@ Build an Earnings Intelligence OS for semiconductor companies:
 * steps:
   1. Run filing monitor (`run_monitor.py`)
   2. Process detected filings (`run_processor.py`)
-  3. Backfill missing Storage paths (`run_backfill.py`)
-  4. Backfill missing chunks (`run_chunk_backfill.py`)
-  5. List detected filings (`list_filings.py`)
+  3. Process earnings-release exhibits (`run_exhibit_processor.py`, max 3
+     filings per run)
+  4. Backfill missing Storage paths (`run_backfill.py`)
+  5. Backfill missing chunks (`run_chunk_backfill.py`)
+  6. List detected filings (`list_filings.py`)
 * AI extraction, review, promotion, and brief generation are **not** in the
   workflow — they remain manual by design.
 
@@ -65,9 +67,38 @@ recorded in `processing_error`.
 
 Exhibit support (`src/filing_exhibits.py`, `src/process_filing_exhibit.py`):
 discovers the SEC filing index, selects the likely earnings-release exhibit
-(EX-99.1), downloads/parses/uploads it, and records it in `filing_documents`.
+(EX-99.1), downloads/parses/uploads it, and records it in `filing_documents`
+(`process_earnings_release_exhibit` returns the row's
+`filing_document_id`). The filename matcher also recognizes
+press-release names ending in `pr.htm` (NVIDIA's convention).
 Multi-document chunking (`src/filing_chunker.py`) chunks both primary
 documents and exhibits idempotently.
+
+## Automated exhibit ingestion (complete)
+
+`src/exhibit_status.py` + `src/process_pending_exhibits.py` +
+`run_exhibit_processor.py` (GitHub Actions step 3, batch limit 3):
+
+* selects 8-K filings with `processing_status = "chunked"` and
+  `exhibit_processing_status = "not_checked"` (plus `"failed"` only with
+  `include_failed=True`), newest filing_date first
+* per filing: discover exhibit → download/parse/upload → chunk → mark
+  `processed` with `earnings_release_document_id`; no exhibit → mark
+  `not_found`; any error → mark `failed` with the error message and continue
+  the batch
+* status lifecycle: `not_checked` → `processed` / `not_found` / `failed`;
+  `processed` and `not_found` rows are never re-inspected
+* **chunk-preservation rule:** if a filing already has an earnings-release
+  document with stored chunks (e.g. the manually ingested AVGO 8-K), the
+  worker reuses the existing document id and never re-chunks — grounded
+  claims reference chunk ids with a RESTRICT foreign key, so existing
+  exhibit chunks must never be deleted
+* never calls Gemini; extraction stays manual (free-quota control and
+  analyst oversight)
+* live results: AVGO `0001730168-26-000051` (17 chunks), NVDA
+  `0001045810-26-000051` `q1fy27pr.htm` (13 chunks), AMD
+  `0000002488-26-000072` `amdq126earningsslidesfin.htm` (15 chunks) are
+  `processed`; non-earnings 8-Ks are `not_found`
 
 ## Gemini claim extraction (complete, manual)
 
@@ -133,6 +164,10 @@ Read endpoints (public):
 * `GET /briefs/latest/{ticker}` — latest stored brief; 404 if none
 * `GET /review-queue` — grounded pending claims only; ungrounded legacy rows
   (`source_chunk_id` null) are never exposed
+* `GET /extraction-ready` — filings with a processed, chunked
+  earnings-release exhibit, newest first; each row carries the exhibit
+  filename, `document_key`, `chunk_count`, and
+  `ready_for_extraction` — the queue for manual grounded-claim extraction
 
 Write endpoints (analyst workflow; all require `X-Admin-Token`):
 
@@ -187,14 +222,17 @@ Brief). Deployed on Vercel at
 
 Routes:
 
-* `/` — overview: stat cards (recent filings, chunked, pending grounded
-  claims, latest AVGO brief version) + latest-filings table; a missing brief
-  renders as "—", not an error
+* `/` — overview: stat cards (recent filings, extraction-ready filings,
+  pending grounded claims, latest AVGO brief version) + latest-filings
+  table; a missing brief renders as "—", not an error
 * `/filings` — feed with ticker/status/limit filters and status badges;
   the ticker list loads dynamically from `GET /companies` (with a static
   fallback if the endpoint fails)
 * `/filings/[accessionNumber]` — full filing metadata, timestamps,
   processing error, document list with Storage flags, chunk count
+* `/extraction-ready` — ingested + chunked earnings-release exhibits with
+  exhibit filename, document key, chunk count, and status badge; accession
+  numbers link to the filing detail page; clean empty state
 * `/review-queue` — grounded pending claims grouped by filing; approve /
   edit-and-approve / reject with optional reviewer notes; per-filing
   "Promote reviewed claims for this filing" button (scoped promotion only —
@@ -231,7 +269,10 @@ API tests: `test_api_health.py`, `test_api_filings.py`, `test_api_briefs.py`,
 `test_api_review_queue.py`, `test_api_companies.py`, `test_api_cors.py`,
 `test_api_auth.py` (public reads, 401s, correct-token action, fail-closed
 500), `test_api_review_actions.py`,
-`test_api_promotion.py` (global + scoped modes), `test_api_brief_generation.py`.
+`test_api_promotion.py` (global + scoped modes), `test_api_brief_generation.py`,
+`test_api_extraction_ready.py`, and `test_process_pending_exhibits.py`
+(worker processed / not-found / failed paths, idempotency, and proof that
+grounded chunks and trusted claims survive reruns).
 Write-endpoint tests supply a temporary admin token via the environment
 (never printed),
 insert clearly marked temporary rows and delete them in `finally` blocks;
@@ -251,8 +292,10 @@ deprecated; install httpx2 instead.` — harmless, left as-is.
 
 ## Next milestone
 
-* Automate earnings-release exhibit ingestion for newly detected 8-K
-  filings and expand the system beyond the manually tested AVGO workflow.
+1. Add protected dashboard-triggered manual claim extraction for
+   extraction-ready filings.
+2. Generate reviewed briefs for AMD, NVDA, INTC, and QCOM.
+3. Add company pages and polish the cross-company overview.
 
 ## Safety rules
 

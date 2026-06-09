@@ -3,6 +3,7 @@ const STATUS_STYLES: Record<string, string> = {
   downloaded: "text-foreground border-edge",
   parsed: "text-accent border-accent/40",
   chunked: "text-positive border-positive/40",
+  processed: "text-positive border-positive/40",
   failed: "text-negative border-negative/40",
 };
 

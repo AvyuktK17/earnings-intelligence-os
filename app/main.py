@@ -1,7 +1,7 @@
 """Research API for the Earnings Intelligence OS dashboard.
 
-Read endpoints serve the filing feed, filing detail, stored briefs, and the
-analyst review queue. Write endpoints drive the analyst workflow: approve,
+Read endpoints serve the filing feed, filing detail, stored briefs, the
+analyst review queue, and the extraction-ready exhibit queue. Write endpoints drive the analyst workflow: approve,
 edit, or reject proposed claims, promote reviewed claims into trusted
 qualitative_claims, and generate versioned earnings briefs. Write endpoints
 require the X-Admin-Token header matching ADMIN_API_TOKEN; read endpoints
@@ -243,6 +243,67 @@ def list_review_queue() -> dict:
         .data
     )
     return {"count": len(claims), "claims": claims}
+
+
+@app.get("/extraction-ready")
+def list_extraction_ready() -> dict:
+    """Return filings whose earnings-release exhibit is ingested and chunked.
+
+    These filings have a processed EX-99.1 exhibit with stored chunks and are
+    ready for the manual grounded-claim extraction step. Read-only; the API
+    never triggers extraction itself.
+    """
+    supabase = _supabase()
+
+    filings = (
+        supabase.table("filings")
+        .select(
+            "id, ticker, accession_number, form, filing_date, "
+            "exhibit_processing_status, earnings_release_document_id"
+        )
+        .eq("exhibit_processing_status", "processed")
+        .not_.is_("earnings_release_document_id", "null")
+        .order("filing_date", desc=True)
+        .execute()
+        .data
+    )
+
+    results = []
+    for filing in filings:
+        document_id = filing["earnings_release_document_id"]
+        documents = (
+            supabase.table("filing_documents")
+            .select("id, filename")
+            .eq("id", document_id)
+            .execute()
+            .data
+        )
+        filename = documents[0]["filename"] if documents else None
+        chunk_count = (
+            supabase.table("filing_chunks")
+            .select("id", count="exact")
+            .eq("filing_document_id", document_id)
+            .execute()
+            .count
+            or 0
+        )
+        results.append(
+            {
+                "filing_id": filing["id"],
+                "ticker": filing["ticker"],
+                "accession_number": filing["accession_number"],
+                "form": filing["form"],
+                "filing_date": filing["filing_date"],
+                "exhibit_processing_status": filing["exhibit_processing_status"],
+                "earnings_release_document_id": document_id,
+                "filename": filename,
+                "document_key": f"exhibit:{filename}" if filename else None,
+                "chunk_count": chunk_count,
+                "ready_for_extraction": chunk_count > 0,
+            }
+        )
+
+    return {"count": len(results), "filings": results}
 
 
 @app.post("/review-queue/{claim_id}/approve", dependencies=[Depends(require_admin_token)])
