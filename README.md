@@ -1,71 +1,96 @@
-# Earnings Intelligence OS — Backend
+# Earnings Intelligence OS
 
-A Python backend that monitors SEC EDGAR for recent filings from a watchlist of companies and stores them in Supabase.
+A research platform for semiconductor earnings: a Python backend that monitors
+SEC EDGAR, parses and chunks filings, extracts evidence-linked draft claims,
+and requires human review before claims reach trusted outputs — plus a Next.js
+analyst dashboard that drives the review workflow through a FastAPI service.
 
-## What it does
+## Repository layout
 
-1. Connects to a Supabase database.
-2. Checks SEC EDGAR for recent 10-K, 10-Q, and 8-K filings for each watched company.
-3. Inserts filings that have not been seen before.
-4. Skips filings that already exist (deduplicates by accession number).
-5. Records every pipeline run with its status and timestamps.
-6. Provides a command to list all detected filings stored in the database.
+| Path | Purpose |
+|------|---------|
+| `src/` | Ingestion, extraction, review, promotion, and brief modules |
+| `app/main.py` | FastAPI research API (read + analyst write endpoints) |
+| `frontend/` | Next.js analyst dashboard (TypeScript, Tailwind) |
+| `test_*.py` | Script-style tests run with `python test_<name>.py` |
+| `.github/workflows/run-monitor.yml` | Scheduled filing monitor (every 6 h) |
 
-## Setup
-
-**1. Clone the repo and enter the backend folder**
-
-```bash
-cd backend
-```
-
-**2. Create a virtual environment and install dependencies**
+## Backend setup
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-**3. Create your local environment file**
-
-```bash
 cp .env.example .env
 ```
 
-Open `.env` and fill in your credentials:
+Fill in `.env`:
 
 - `SUPABASE_URL` — your Supabase project URL
 - `SUPABASE_SECRET_KEY` — your Supabase service-role key
 - `SEC_USER_AGENT` — required by SEC EDGAR, e.g. `Your Name your@email.com`
+- `ALLOWED_ORIGINS` — optional, comma-separated browser origins allowed to
+  call the API (defaults to `http://localhost:3000`)
 
-> **Warning: never commit `.env` to Git.** It is listed in `.gitignore` to prevent accidental exposure.
+> **Warning: never commit `.env` to Git.** It is listed in `.gitignore`.
 
-## Running the monitor
-
-```bash
-python run_monitor.py
-```
-
-Checks all companies in the `companies` table, inserts any new filings, and prints a summary.
-
-## Listing stored filings
+### Run the API
 
 ```bash
-python list_filings.py
+uvicorn app.main:app --reload
 ```
 
-Prints the 25 most recently filed rows from the `filings` table, plus the total count.
+Interactive docs at `http://localhost:8000/docs`.
 
-## Main files
+Read endpoints: `/health`, `/filings`, `/filings/{accession_number}`,
+`/briefs/latest/{ticker}`, `/review-queue`.
 
-| File | Purpose |
-|------|---------|
-| `run_monitor.py` | Entry point — run a filing check for all companies |
-| `list_filings.py` | Read-only view of filings stored in Supabase |
-| `src/database.py` | Supabase client factory |
-| `src/sec_client.py` | SEC EDGAR submissions fetcher |
-| `src/filing_sync.py` | Insert new filings, skip duplicates |
-| `src/run_filing_check.py` | Orchestrate one company: pipeline run + sync |
-| `src/run_all_filing_checks.py` | Loop over all companies in the database |
-| `src/pipeline_runs.py` | Start, complete, and fail pipeline run records |
+Analyst write endpoints: `POST /review-queue/{id}/approve|edit|reject`,
+`POST /claims/promote`, `POST /briefs/generate`.
+
+`POST /claims/promote` accepts an optional JSON body
+`{"ticker": "...", "accession_number": "..."}` to scope promotion to one
+ticker and/or one filing; with no body it promotes every eligible reviewed
+claim (the original global behavior). The dashboard always promotes scoped
+to a filing.
+
+### CLI utilities
+
+```bash
+python run_monitor.py        # check EDGAR for new filings
+python list_filings.py       # list stored filings
+python review_claims.py      # interactive claim review
+python promote_claims.py     # promote reviewed claims
+```
+
+## Frontend setup
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local   # sets NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+npm run dev
+```
+
+Open `http://localhost:3000` (start the backend first). The browser talks
+only to the FastAPI service — never directly to Supabase.
+
+### Dashboard routes
+
+| Route | Purpose |
+|-------|---------|
+| `/` | Overview: summary cards + latest filings |
+| `/filings` | Filing feed with ticker/status/limit filters |
+| `/filings/[accessionNumber]` | Filing detail, documents, chunk count |
+| `/review-queue` | Approve / edit / reject grounded pending claims; scoped promotion |
+| `/briefs/latest/[ticker]` | Latest stored brief with markdown rendering and version generation |
+
+## Tests
+
+```bash
+python test_api_health.py          # and the other test_api_*.py scripts
+cd frontend && npm run lint && npm run build
+```
+
+API tests run against live Supabase data; mutation tests use temporary rows
+and clean up after themselves.

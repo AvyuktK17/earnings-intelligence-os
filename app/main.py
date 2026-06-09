@@ -9,9 +9,11 @@ no authentication yet. Run locally with:
     uvicorn app.main:app --reload
 """
 
+import os
 from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.brief_storage import generate_and_store_earnings_brief
@@ -20,6 +22,22 @@ from src.claim_review import approve_claim, approve_claim_with_edits, reject_cla
 from src.database import get_supabase_client
 
 app = FastAPI(title="Earnings Intelligence OS API")
+
+# Comma-separated list of allowed browser origins for local frontend
+# development. Defaults to the local Next.js dev server.
+_allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 FILING_COLUMNS = (
     "id, ticker, accession_number, form, filing_date, report_date, "
@@ -75,6 +93,11 @@ class EditClaimRequest(BaseModel):
 class GenerateBriefRequest(BaseModel):
     ticker: str = Field(min_length=1)
     accession_number: str = Field(min_length=1)
+
+
+class PromoteClaimsRequest(BaseModel):
+    ticker: str | None = None
+    accession_number: str | None = None
 
 
 @app.get("/health")
@@ -214,13 +237,20 @@ def reject_review_claim(claim_id: int, body: ReviewNotesRequest | None = None) -
 
 
 @app.post("/claims/promote")
-def promote_claims() -> dict:
-    """Promote all approved and edited grounded claims into qualitative_claims.
+def promote_claims(body: PromoteClaimsRequest | None = None) -> dict:
+    """Promote approved and edited grounded claims into qualitative_claims.
 
-    Pending, rejected, and ungrounded claims are never promoted. Safe to
-    rerun: already-promoted claims are skipped.
+    An optional body scopes promotion to one ticker and/or one filing;
+    with no body, every eligible claim is promoted. Pending, rejected,
+    and ungrounded claims are never promoted. Safe to rerun:
+    already-promoted claims are skipped.
     """
-    return promote_reviewed_claims()
+    ticker = body.ticker if body else None
+    accession_number = body.accession_number if body else None
+    return promote_reviewed_claims(
+        ticker=ticker,
+        accession_number=accession_number,
+    )
 
 
 @app.post("/briefs/generate")

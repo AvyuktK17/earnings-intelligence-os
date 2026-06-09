@@ -12,7 +12,8 @@ Build an Earnings Intelligence OS for semiconductor companies:
 * extract evidence-linked draft claims;
 * require human review before claims enter trusted research outputs;
 * publish trusted claims as versioned earnings briefs;
-* expose everything through a research API for the future dashboard.
+* expose everything through a research API;
+* drive the analyst workflow from a web dashboard.
 
 ## Companies monitored
 
@@ -131,9 +132,17 @@ Write endpoints (analyst workflow):
   (422 if empty/missing), optional notes; 404 unknown, 400 ungrounded
 * `POST /review-queue/{claim_id}/reject` — optional notes; works on
   ungrounded legacy rows; 404 unknown
-* `POST /claims/promote` — runs `promote_reviewed_claims()`; idempotent
+* `POST /claims/promote` — runs `promote_reviewed_claims()`; idempotent;
+  accepts an optional body `{"ticker", "accession_number"}` to scope
+  promotion to one ticker and/or one filing (no body = global mode; the
+  dashboard only ever calls the scoped form)
 * `POST /briefs/generate` — requires `{"ticker", "accession_number"}`;
   ticker uppercased; 404 unknown filing, 400 when no trusted claims exist
+
+CORS: `CORSMiddleware` allows browser calls from the origins in the optional
+`ALLOWED_ORIGINS` env var (comma-separated; defaults to
+`http://localhost:3000`), with credentials and all methods/headers. Verified
+with a preflight test (`test_api_cors.py`).
 
 Error mapping: `ValueError` messages starting with "No proposed claim found" /
 "No filing found" → 404; other workflow `ValueError`s → 400; Pydantic
@@ -144,14 +153,46 @@ of the old `sys.exit(1)`) when `SUPABASE_URL` / `SUPABASE_SECRET_KEY` are
 missing, so a misconfigured API process returns controlled 500s instead of
 dying; the message names the variables but never their values.
 
+## Frontend analyst dashboard (complete, local only)
+
+`frontend/` — Next.js (App Router, stable 16.2.7) + TypeScript + Tailwind v4,
+scaffolded with create-next-app (`src/` directory, npm, ESLint). Only extra
+runtime dependency: `react-markdown`. Dark, data-dense research-terminal
+styling with a left sidebar (Overview / Filings / Review Queue / Latest
+Brief).
+
+* setup: `cd frontend && npm install && cp .env.example .env.local`
+* run: `npm run dev` (backend must be running on
+  `NEXT_PUBLIC_API_BASE_URL`, default `http://localhost:8000`)
+* the browser talks only to the FastAPI service, never to Supabase
+* shared typed client in `src/lib/api.ts` with explicit loading and error
+  states on every page
+
+Routes:
+
+* `/` — overview: stat cards (recent filings, chunked, pending grounded
+  claims, latest AVGO brief version) + latest-filings table; a missing brief
+  renders as "—", not an error
+* `/filings` — feed with ticker/status/limit filters and status badges
+* `/filings/[accessionNumber]` — full filing metadata, timestamps,
+  processing error, document list with Storage flags, chunk count
+* `/review-queue` — grounded pending claims grouped by filing; approve /
+  edit-and-approve / reject with optional reviewer notes; per-filing
+  "Promote reviewed claims for this filing" button (scoped promotion only —
+  the frontend never calls global promotion); clean empty state
+* `/briefs/latest/[ticker]` — brief metadata cards + rendered markdown;
+  "Generate new brief version" button refreshes to the new version
+
 ## Tests
 
 Script-style tests run with `python test_*.py` against live Supabase data.
 API tests: `test_api_health.py`, `test_api_filings.py`, `test_api_briefs.py`,
 `test_api_review_queue.py`, `test_api_review_actions.py`,
-`test_api_promotion.py`, `test_api_brief_generation.py`. Write-endpoint tests
+`test_api_promotion.py` (global + scoped modes), `test_api_brief_generation.py`,
+`test_api_cors.py`. Write-endpoint tests
 insert clearly marked temporary rows and delete them in `finally` blocks;
 real trusted AVGO claims and the persisted v1 brief are never modified.
+Frontend checks: `cd frontend && npm run lint && npm run build`.
 Known cosmetic warning when importing TestClient:
 `StarletteDeprecationWarning: Using httpx with starlette.testclient is
 deprecated; install httpx2 instead.` — harmless, left as-is.
@@ -166,8 +207,8 @@ deprecated; install httpx2 instead.` — harmless, left as-is.
 
 ## Next milestone
 
-* Build the frontend dashboard (consumes the read endpoints above; drives
-  the analyst workflow through the write endpoints).
+* Add authentication and deploy the MVP (API + dashboard). The API currently
+  has no auth and must stay local until then.
 
 ## Safety rules
 

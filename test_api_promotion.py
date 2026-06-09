@@ -1,10 +1,16 @@
-"""Test the POST /claims/promote endpoint.
+"""Test the POST /claims/promote endpoint in global and scoped modes.
 
-Inserts four temporary proposed_claims rows (approved, edited, rejected,
-pending) tied to a real AVGO exhibit chunk, promotes via the API, verifies
-only the approved and edited rows reach qualitative_claims, reruns to prove
-idempotency, then deletes every temporary trusted and proposed row. Real
-trusted AVGO claims are never touched. No AI calls.
+Global mode: inserts four temporary proposed_claims rows (approved, edited,
+rejected, pending) tied to a real AVGO exhibit chunk, promotes via the API,
+verifies only the approved and edited rows reach qualitative_claims, reruns
+to prove idempotency.
+
+Scoped mode: inserts temporary approved claims for two different filings and
+verifies a filing-scoped promote touches only the matching row, then that
+global mode still promotes the rest.
+
+Every temporary trusted and proposed row is deleted afterward. Real trusted
+AVGO claims are never touched. No AI calls.
 """
 
 import sys
@@ -23,12 +29,13 @@ DOCUMENT_KEY = "exhibit:avgo-05032026x8kxex99.htm"
 TEMP_THEME = "TEMP_API_TEST_PROMOTION"
 
 
-def insert_temp_claim(supabase, filing_id, chunk, review_status, edited_text=None) -> int:
+def insert_temp_claim(supabase, filing_id, chunk, review_status, edited_text=None,
+                      ticker="AVGO", accession=ACCESSION) -> int:
     now = datetime.now(timezone.utc).isoformat()
     row = {
         "filing_id": filing_id,
-        "ticker": "AVGO",
-        "accession_number": ACCESSION,
+        "ticker": ticker,
+        "accession_number": accession,
         "document_key": DOCUMENT_KEY,
         "theme": TEMP_THEME,
         "claim_text": f"Temporary {review_status} claim for promotion test.",
@@ -198,5 +205,127 @@ def main() -> None:
     )
 
 
+def scoped_main() -> None:
+    """Verify filing-scoped promotion touches only matching temp rows."""
+    client = TestClient(app)
+    supabase = get_supabase_client()
+
+    avgo_filing_id = (
+        supabase.table("filings")
+        .select("id")
+        .eq("accession_number", ACCESSION)
+        .execute()
+        .data[0]["id"]
+    )
+    nvda_filing = (
+        supabase.table("filings")
+        .select("id, accession_number")
+        .eq("ticker", "NVDA")
+        .limit(1)
+        .execute()
+        .data[0]
+    )
+    chunk = (
+        supabase.table("filing_chunks")
+        .select("id, chunk_index")
+        .eq("accession_number", ACCESSION)
+        .eq("document_key", DOCUMENT_KEY)
+        .order("chunk_index")
+        .limit(1)
+        .execute()
+        .data[0]
+    )
+
+    real_before = (
+        supabase.table("qualitative_claims")
+        .select("proposed_claim_id, claim, promoted_at")
+        .not_.is_("proposed_claim_id", "null")
+        .execute()
+        .data
+    )
+
+    temp_ids = []
+    try:
+        avgo_id = insert_temp_claim(supabase, avgo_filing_id, chunk, "approved")
+        nvda_id = insert_temp_claim(
+            supabase, nvda_filing["id"], chunk, "approved",
+            ticker="NVDA", accession=nvda_filing["accession_number"],
+        )
+        temp_ids = [avgo_id, nvda_id]
+        print(f"\nInserted temp approved claims: AVGO={avgo_id}, "
+              f"NVDA={nvda_id} ({nvda_filing['accession_number']})")
+
+        # --- Filing-scoped promote (lowercase ticker must normalize) ---
+        response = client.post(
+            "/claims/promote",
+            json={"ticker": "avgo", "accession_number": ACCESSION},
+        )
+        assert response.status_code == 200, (
+            f"Scoped promote: expected 200, got {response.status_code}."
+        )
+        body = response.json()
+        promoted_ids = {c["proposed_claim_id"] for c in body["promoted_claims"]}
+        assert promoted_ids == {avgo_id}, (
+            f"Scoped promote must touch only the AVGO temp claim, got {promoted_ids}."
+        )
+        print(f"POST /claims/promote (scoped to AVGO/{ACCESSION}) -> 200: "
+              f"promoted={body['promoted_count']} (only the matching temp claim)")
+
+        # --- Nonmatching temp row untouched ---
+        nvda_trusted = fetch_trusted_by_proposed_ids(supabase, [nvda_id])
+        assert not nvda_trusted, (
+            f"Out-of-scope NVDA temp claim was promoted: {nvda_trusted}."
+        )
+        nvda_row = (
+            supabase.table("proposed_claims")
+            .select("review_status")
+            .eq("id", nvda_id)
+            .execute()
+            .data[0]
+        )
+        assert nvda_row["review_status"] == "approved", (
+            "Out-of-scope temp claim must remain approved and unpromoted."
+        )
+        print("  [OK] out-of-scope NVDA temp claim untouched")
+
+        # --- Global mode still works: picks up the NVDA leftover ---
+        response = client.post("/claims/promote")
+        assert response.status_code == 200
+        body = response.json()
+        promoted_ids = {c["proposed_claim_id"] for c in body["promoted_claims"]}
+        assert promoted_ids == {nvda_id}, (
+            f"Global promote should pick up the NVDA temp claim, got {promoted_ids}."
+        )
+        print(f"POST /claims/promote (global, no body) -> 200: "
+              f"promoted={body['promoted_count']} (the remaining temp claim)")
+
+    finally:
+        if temp_ids:
+            supabase.table("qualitative_claims").delete().in_(
+                "proposed_claim_id", temp_ids
+            ).execute()
+            supabase.table("proposed_claims").delete().in_("id", temp_ids).execute()
+            print(f"Cleaned up temp trusted and proposed rows for {temp_ids}.")
+
+    real_after = (
+        supabase.table("qualitative_claims")
+        .select("proposed_claim_id, claim, promoted_at")
+        .not_.is_("proposed_claim_id", "null")
+        .execute()
+        .data
+    )
+    assert sorted(real_after, key=lambda r: r["proposed_claim_id"]) == sorted(
+        real_before, key=lambda r: r["proposed_claim_id"]
+    ), "Real trusted AVGO claims changed during the scoped test."
+    print("Real trusted promoted rows unchanged.")
+
+    print()
+    print(
+        "PASS: scoped promotion promotes only matching rows, leaves "
+        "out-of-scope rows untouched, and global mode still works."
+    )
+
+
 if __name__ == "__main__":
     main()
+    scoped_main()

@@ -13,8 +13,20 @@ from datetime import datetime, timezone
 from src.database import get_supabase_client
 
 
-def promote_reviewed_claims() -> dict:
-    """Promote all eligible reviewed proposed claims into qualitative_claims.
+def promote_reviewed_claims(
+    ticker: str | None = None,
+    accession_number: str | None = None,
+) -> dict:
+    """Promote eligible reviewed proposed claims into qualitative_claims.
+
+    Args:
+        ticker: Optional ticker filter (normalized to uppercase). Only
+            claims for this ticker are considered.
+        accession_number: Optional accession-number filter. Only claims
+            for this filing are considered.
+
+    When both filters are omitted, every eligible claim is promoted
+    (the original global behavior).
 
     Returns:
         A dict with eligible_count, promoted_count, skipped_existing_count,
@@ -26,15 +38,19 @@ def promote_reviewed_claims() -> dict:
     companies_resp = supabase.table("companies").select("ticker, company_name").execute()
     company_map = {r["ticker"]: r["company_name"] for r in companies_resp.data}
 
-    # Fetch all eligible proposed claims: approved or edited, grounded.
-    eligible = (
+    # Fetch eligible proposed claims: approved or edited, grounded,
+    # optionally scoped to one ticker and/or one filing.
+    query = (
         supabase.table("proposed_claims")
         .select("*")
         .in_("review_status", ["approved", "edited"])
         .not_.is_("source_chunk_id", "null")
-        .execute()
-        .data
     )
+    if ticker is not None:
+        query = query.eq("ticker", ticker.upper())
+    if accession_number is not None:
+        query = query.eq("accession_number", accession_number)
+    eligible = query.execute().data
 
     promoted = []
     skipped_existing = 0
