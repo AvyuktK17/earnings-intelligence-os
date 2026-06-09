@@ -5,6 +5,11 @@ SEC EDGAR, parses and chunks filings, extracts evidence-linked draft claims,
 and requires human review before claims reach trusted outputs — plus a Next.js
 analyst dashboard that drives the review workflow through a FastAPI service.
 
+**Live MVP:**
+
+* Dashboard (Vercel): <https://earnings-intelligence-os.vercel.app>
+* API (Render): <https://earnings-intelligence-os-api.onrender.com>
+
 ## Repository layout
 
 | Path | Purpose |
@@ -110,22 +115,32 @@ only to the FastAPI service — never directly to Supabase.
 | `/review-queue` | Approve / edit / reject grounded pending claims; scoped promotion |
 | `/briefs/latest/[ticker]` | Latest stored brief with markdown rendering and version generation |
 
-## Deployment (prepared, not yet performed)
+## Deployment (live)
 
-The backend ships with a `render.yaml` blueprint (Python web service). The
-production start command is:
+The MVP is deployed:
 
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
-```
+* **Backend:** Render web service at
+  `https://earnings-intelligence-os-api.onrender.com`, built from the
+  `render.yaml` blueprint with start command:
 
-Required backend environment variables: `SUPABASE_URL`,
+  ```bash
+  uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+  ```
+
+* **Frontend:** Vercel at `https://earnings-intelligence-os.vercel.app`,
+  with `NEXT_PUBLIC_API_BASE_URL` set to the Render API origin.
+
+Backend environment variables (configured in Render): `SUPABASE_URL`,
 `SUPABASE_SECRET_KEY`, `SEC_USER_AGENT`, `GEMINI_API_KEY`, `GEMINI_MODEL`
-(optional), `ALLOWED_ORIGINS` (set to the deployed frontend origin), and
-`ADMIN_API_TOKEN`.
+(optional), `ALLOWED_ORIGINS`, and `ADMIN_API_TOKEN`. `ALLOWED_ORIGINS` is
+set to `http://localhost:3000,https://earnings-intelligence-os.vercel.app`
+so both local development and the deployed dashboard can call the API. The
+Supabase server-side key configuration in Render was corrected after the
+initial deploy.
 
-The frontend needs only `NEXT_PUBLIC_API_BASE_URL` pointing at the deployed
-API. Notes: Gemini extraction remains a manual local step — the deployed API
+A production smoke test confirmed the public GET endpoints and the
+admin-token-protected POST endpoints work against the live deployment.
+Notes: Gemini extraction remains a manual local step — the deployed API
 never calls Gemini — and scheduled SEC ingestion stays in GitHub Actions.
 
 ## Tests

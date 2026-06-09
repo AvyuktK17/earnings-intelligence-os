@@ -109,9 +109,10 @@ documents and exhibits idempotently.
 
 ## FastAPI research API (complete)
 
-`app/main.py` — `FastAPI(title="Earnings Intelligence OS API")`; run with
-`uvicorn app.main:app --reload`. Uses `src.database.get_supabase_client()`
-via a single `lru_cache`d client. No authentication yet. Not deployed.
+`app/main.py` — `FastAPI(title="Earnings Intelligence OS API")`; run locally
+with `uvicorn app.main:app --reload`. Uses
+`src.database.get_supabase_client()` via a single `lru_cache`d client.
+Deployed on Render at `https://earnings-intelligence-os-api.onrender.com`.
 
 Authentication (MVP admin token): every write endpoint requires the
 `X-Admin-Token` header to match the `ADMIN_API_TOKEN` env var, compared
@@ -162,13 +163,15 @@ of the old `sys.exit(1)`) when `SUPABASE_URL` / `SUPABASE_SECRET_KEY` are
 missing, so a misconfigured API process returns controlled 500s instead of
 dying; the message names the variables but never their values.
 
-## Frontend analyst dashboard (complete, local only)
+## Frontend analyst dashboard (complete, deployed)
 
 `frontend/` — Next.js (App Router, stable 16.2.7) + TypeScript + Tailwind v4,
 scaffolded with create-next-app (`src/` directory, npm, ESLint). Only extra
 runtime dependency: `react-markdown`. Dark, data-dense research-terminal
 styling with a left sidebar (Overview / Filings / Review Queue / Latest
-Brief).
+Brief). Deployed on Vercel at
+`https://earnings-intelligence-os.vercel.app` with
+`NEXT_PUBLIC_API_BASE_URL` pointing at the Render API.
 
 * setup: `cd frontend && npm install && cp .env.example .env.local`
 * run: `npm run dev` (backend must be running on
@@ -199,17 +202,25 @@ Routes:
 * `/briefs/latest/[ticker]` — brief metadata cards + rendered markdown;
   "Generate new brief version" button refreshes to the new version
 
-## Deployment preparation (complete — NOT deployed)
+## Deployment (complete — MVP live)
 
-* `render.yaml` blueprint: Python web service, health check on `/health`,
-  start command `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-  (verified locally with `--host 0.0.0.0 --port ${PORT:-8000}`)
-* backend env vars: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SEC_USER_AGENT`,
-  `GEMINI_API_KEY`, `GEMINI_MODEL` (optional, default `gemini-2.5-flash` —
-  now read from the environment by the extraction modules), `ALLOWED_ORIGINS`
-  (set to the deployed frontend origin), `ADMIN_API_TOKEN`
-* frontend env var: `NEXT_PUBLIC_API_BASE_URL` (production-safe
-  `frontend/.env.example` documents it)
+* **Backend (Render):** `https://earnings-intelligence-os-api.onrender.com`
+  — deployed from the `render.yaml` blueprint (Python web service, health
+  check on `/health`, start command
+  `uvicorn app.main:app --host 0.0.0.0 --port $PORT`)
+* **Frontend (Vercel):** `https://earnings-intelligence-os.vercel.app`
+* backend env vars configured in Render: `SUPABASE_URL`,
+  `SUPABASE_SECRET_KEY`, `SEC_USER_AGENT`, `GEMINI_API_KEY`, `GEMINI_MODEL`
+  (optional, default `gemini-2.5-flash`), `ALLOWED_ORIGINS`, `ADMIN_API_TOKEN`
+* production CORS: Render `ALLOWED_ORIGINS` is set to
+  `http://localhost:3000,https://earnings-intelligence-os.vercel.app`
+* the Supabase server-side key configuration in Render was initially wrong
+  and has been corrected; the API now reaches Supabase in production
+* production smoke test passed: public GET endpoints (health, companies,
+  filings, briefs, review queue) and admin-token-protected POST endpoints
+  are working against the live deployment
+* frontend env var: `NEXT_PUBLIC_API_BASE_URL` set in Vercel to the Render
+  API origin (production-safe `frontend/.env.example` documents it)
 * the deployed API never calls Gemini (extraction stays manual); scheduled
   SEC ingestion stays in GitHub Actions
 
@@ -240,9 +251,8 @@ deprecated; install httpx2 instead.` — harmless, left as-is.
 
 ## Next milestone
 
-* Deploy backend and frontend, configure production CORS
-  (`ALLOWED_ORIGINS` = deployed frontend origin), and smoke-test the live
-  application.
+* Automate earnings-release exhibit ingestion for newly detected 8-K
+  filings and expand the system beyond the manually tested AVGO workflow.
 
 ## Safety rules
 
@@ -255,5 +265,6 @@ deprecated; install httpx2 instead.` — harmless, left as-is.
 * Keep AI extraction manual until quality is reviewed
 * Write endpoints require the admin token; keep `ADMIN_API_TOKEN` private
   and never commit or print it
-* Not deployed yet — deploy only with production CORS and the admin token
-  configured as deployment secrets
+* Production secrets (Supabase keys, admin token) live only in Render's and
+  Vercel's environment settings — never in the repository; keep
+  `ALLOWED_ORIGINS` restricted to known frontend origins
