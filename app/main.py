@@ -1,6 +1,9 @@
-"""Read-only research API for the Earnings Intelligence OS dashboard.
+"""Research API for the Earnings Intelligence OS dashboard.
 
-Every endpoint only reads from Supabase. No AI calls, no row mutations,
+Read endpoints serve the filing feed, filing detail, stored briefs, and the
+analyst review queue. Write endpoints drive the analyst workflow: approve,
+edit, or reject proposed claims, promote reviewed claims into trusted
+qualitative_claims, and generate versioned earnings briefs. No AI calls,
 no authentication yet. Run locally with:
 
     uvicorn app.main:app --reload
@@ -9,7 +12,11 @@ no authentication yet. Run locally with:
 from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
 
+from src.brief_storage import generate_and_store_earnings_brief
+from src.claim_promotion import promote_reviewed_claims
+from src.claim_review import approve_claim, approve_claim_with_edits, reject_claim
 from src.database import get_supabase_client
 
 app = FastAPI(title="Earnings Intelligence OS API")
@@ -41,6 +48,33 @@ CLAIM_COLUMNS = (
 def _supabase():
     """Create the Supabase client once and reuse it across requests."""
     return get_supabase_client()
+
+
+# ValueError messages from src modules that mean "resource does not exist".
+# Everything else (grounding failures, empty edits, no trusted claims) is a
+# bad request.
+_NOT_FOUND_PREFIXES = ("No proposed claim found", "No filing found")
+
+
+def _http_error(exc: ValueError) -> HTTPException:
+    """Map a ValueError from the workflow modules to a 404 or 400 response."""
+    detail = str(exc)
+    status_code = 404 if detail.startswith(_NOT_FOUND_PREFIXES) else 400
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+class ReviewNotesRequest(BaseModel):
+    reviewer_notes: str | None = None
+
+
+class EditClaimRequest(BaseModel):
+    edited_claim_text: str = Field(min_length=1)
+    reviewer_notes: str | None = None
+
+
+class GenerateBriefRequest(BaseModel):
+    ticker: str = Field(min_length=1)
+    accession_number: str = Field(min_length=1)
 
 
 @app.get("/health")
@@ -144,3 +178,58 @@ def list_review_queue() -> dict:
         .data
     )
     return {"count": len(claims), "claims": claims}
+
+
+@app.post("/review-queue/{claim_id}/approve")
+def approve_review_claim(claim_id: int, body: ReviewNotesRequest | None = None) -> dict:
+    """Approve a grounded proposed claim as-is."""
+    notes = body.reviewer_notes if body else None
+    try:
+        return approve_claim(claim_id, reviewer_notes=notes)
+    except ValueError as exc:
+        raise _http_error(exc)
+
+
+@app.post("/review-queue/{claim_id}/edit")
+def edit_review_claim(claim_id: int, body: EditClaimRequest) -> dict:
+    """Approve a grounded proposed claim with corrected analyst wording."""
+    try:
+        return approve_claim_with_edits(
+            claim_id,
+            edited_claim_text=body.edited_claim_text,
+            reviewer_notes=body.reviewer_notes,
+        )
+    except ValueError as exc:
+        raise _http_error(exc)
+
+
+@app.post("/review-queue/{claim_id}/reject")
+def reject_review_claim(claim_id: int, body: ReviewNotesRequest | None = None) -> dict:
+    """Reject a proposed claim. Ungrounded legacy rows may be rejected."""
+    notes = body.reviewer_notes if body else None
+    try:
+        return reject_claim(claim_id, reviewer_notes=notes)
+    except ValueError as exc:
+        raise _http_error(exc)
+
+
+@app.post("/claims/promote")
+def promote_claims() -> dict:
+    """Promote all approved and edited grounded claims into qualitative_claims.
+
+    Pending, rejected, and ungrounded claims are never promoted. Safe to
+    rerun: already-promoted claims are skipped.
+    """
+    return promote_reviewed_claims()
+
+
+@app.post("/briefs/generate")
+def generate_brief(body: GenerateBriefRequest) -> dict:
+    """Generate, upload, and store the next versioned earnings brief."""
+    try:
+        return generate_and_store_earnings_brief(
+            ticker=body.ticker.upper(),
+            accession_number=body.accession_number,
+        )
+    except ValueError as exc:
+        raise _http_error(exc)
