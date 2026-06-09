@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import AdminAccess from "@/components/AdminAccess";
 
 const LINKS = [
   { href: "/", label: "Overview" },
@@ -46,6 +47,7 @@ export default function Nav() {
           </Link>
         ))}
       </nav>
+      <AdminAccess />
       <div className="px-4 py-3 border-t border-edge text-[11px] text-faint font-mono">
         local · read API + analyst actions
       </div>

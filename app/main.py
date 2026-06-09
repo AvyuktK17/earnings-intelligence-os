@@ -3,16 +3,19 @@
 Read endpoints serve the filing feed, filing detail, stored briefs, and the
 analyst review queue. Write endpoints drive the analyst workflow: approve,
 edit, or reject proposed claims, promote reviewed claims into trusted
-qualitative_claims, and generate versioned earnings briefs. No AI calls,
-no authentication yet. Run locally with:
+qualitative_claims, and generate versioned earnings briefs. Write endpoints
+require the X-Admin-Token header matching ADMIN_API_TOKEN; read endpoints
+are public. No AI calls. Run locally with:
 
     uvicorn app.main:app --reload
 """
 
 import os
+import secrets
 from functools import lru_cache
 
-from fastapi import FastAPI, HTTPException, Query
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -20,6 +23,8 @@ from src.brief_storage import generate_and_store_earnings_brief
 from src.claim_promotion import promote_reviewed_claims
 from src.claim_review import approve_claim, approve_claim_with_edits, reject_claim
 from src.database import get_supabase_client
+
+load_dotenv()
 
 app = FastAPI(title="Earnings Intelligence OS API")
 
@@ -81,6 +86,29 @@ def _http_error(exc: ValueError) -> HTTPException:
     return HTTPException(status_code=status_code, detail=detail)
 
 
+def require_admin_token(
+    x_admin_token: str | None = Header(default=None),
+) -> None:
+    """Guard analyst write endpoints with the shared admin token.
+
+    Read endpoints stay public; every mutating endpoint depends on this.
+    The expected token is read per-request so the server never caches a
+    stale value and tests can control it through the environment.
+    """
+    expected = os.getenv("ADMIN_API_TOKEN")
+    if not expected:
+        # Never reveal which variable is missing or any configuration value.
+        raise HTTPException(
+            status_code=500,
+            detail="Server configuration error.",
+        )
+    if not x_admin_token or not secrets.compare_digest(x_admin_token, expected):
+        raise HTTPException(
+            status_code=401,
+            detail="Admin token missing or invalid.",
+        )
+
+
 class ReviewNotesRequest(BaseModel):
     reviewer_notes: str | None = None
 
@@ -104,6 +132,20 @@ class PromoteClaimsRequest(BaseModel):
 def health() -> dict:
     """Liveness check for the API service."""
     return {"status": "ok", "service": "earnings-intelligence-os"}
+
+
+@app.get("/companies")
+def list_companies() -> dict:
+    """Return the monitored-company watchlist, ordered by ticker."""
+    companies = (
+        _supabase()
+        .table("companies")
+        .select("ticker, company_name, cik, business_model")
+        .order("ticker", desc=False)
+        .execute()
+        .data
+    )
+    return {"count": len(companies), "companies": companies}
 
 
 @app.get("/filings")
@@ -203,7 +245,7 @@ def list_review_queue() -> dict:
     return {"count": len(claims), "claims": claims}
 
 
-@app.post("/review-queue/{claim_id}/approve")
+@app.post("/review-queue/{claim_id}/approve", dependencies=[Depends(require_admin_token)])
 def approve_review_claim(claim_id: int, body: ReviewNotesRequest | None = None) -> dict:
     """Approve a grounded proposed claim as-is."""
     notes = body.reviewer_notes if body else None
@@ -213,7 +255,7 @@ def approve_review_claim(claim_id: int, body: ReviewNotesRequest | None = None) 
         raise _http_error(exc)
 
 
-@app.post("/review-queue/{claim_id}/edit")
+@app.post("/review-queue/{claim_id}/edit", dependencies=[Depends(require_admin_token)])
 def edit_review_claim(claim_id: int, body: EditClaimRequest) -> dict:
     """Approve a grounded proposed claim with corrected analyst wording."""
     try:
@@ -226,7 +268,7 @@ def edit_review_claim(claim_id: int, body: EditClaimRequest) -> dict:
         raise _http_error(exc)
 
 
-@app.post("/review-queue/{claim_id}/reject")
+@app.post("/review-queue/{claim_id}/reject", dependencies=[Depends(require_admin_token)])
 def reject_review_claim(claim_id: int, body: ReviewNotesRequest | None = None) -> dict:
     """Reject a proposed claim. Ungrounded legacy rows may be rejected."""
     notes = body.reviewer_notes if body else None
@@ -236,7 +278,7 @@ def reject_review_claim(claim_id: int, body: ReviewNotesRequest | None = None) -
         raise _http_error(exc)
 
 
-@app.post("/claims/promote")
+@app.post("/claims/promote", dependencies=[Depends(require_admin_token)])
 def promote_claims(body: PromoteClaimsRequest | None = None) -> dict:
     """Promote approved and edited grounded claims into qualitative_claims.
 
@@ -253,7 +295,7 @@ def promote_claims(body: PromoteClaimsRequest | None = None) -> dict:
     )
 
 
-@app.post("/briefs/generate")
+@app.post("/briefs/generate", dependencies=[Depends(require_admin_token)])
 def generate_brief(body: GenerateBriefRequest) -> dict:
     """Generate, upload, and store the next versioned earnings brief."""
     try:

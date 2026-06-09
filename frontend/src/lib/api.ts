@@ -6,6 +6,35 @@
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
+/**
+ * The admin token lives only in browser session storage. It is never
+ * hard-coded, never read from a NEXT_PUBLIC_ variable, and only attached
+ * to protected POST requests.
+ */
+const ADMIN_TOKEN_STORAGE_KEY = "eios-admin-token";
+const ADMIN_TOKEN_CHANGE_EVENT = "eios-admin-token-change";
+
+export function getAdminToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
+}
+
+export function saveAdminToken(token: string): void {
+  window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
+  window.dispatchEvent(new Event(ADMIN_TOKEN_CHANGE_EVENT));
+}
+
+export function clearAdminToken(): void {
+  window.sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+  window.dispatchEvent(new Event(ADMIN_TOKEN_CHANGE_EVENT));
+}
+
+/** Subscribe to token changes (for useSyncExternalStore). */
+export function subscribeAdminToken(callback: () => void): () => void {
+  window.addEventListener(ADMIN_TOKEN_CHANGE_EVENT, callback);
+  return () => window.removeEventListener(ADMIN_TOKEN_CHANGE_EVENT, callback);
+}
+
 export interface Filing {
   id: number;
   ticker: string;
@@ -26,6 +55,18 @@ export interface Filing {
 export interface FilingsResponse {
   count: number;
   filings: Filing[];
+}
+
+export interface Company {
+  ticker: string;
+  company_name: string;
+  cik: string;
+  business_model: string | null;
+}
+
+export interface CompaniesResponse {
+  count: number;
+  companies: Company[];
 }
 
 export interface FilingDocument {
@@ -117,12 +158,21 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+
+  // Attach the admin token to protected (mutating) requests only;
+  // GET endpoints are public and never need it.
+  if (init?.method === "POST") {
+    const token = getAdminToken();
+    if (token) headers["X-Admin-Token"] = token;
+  }
+
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...init?.headers },
-    });
+    response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
   } catch {
     throw new ApiError(
       0,
@@ -131,6 +181,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new ApiError(401, "Admin token missing or invalid.");
+    }
     let detail = response.statusText;
     try {
       const body = await response.json();
@@ -146,6 +199,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getCompanies() {
+    return request<CompaniesResponse>("/companies");
+  },
+
   getFilings(params?: { ticker?: string; status?: string; limit?: number }) {
     const search = new URLSearchParams();
     if (params?.ticker) search.set("ticker", params.ticker);

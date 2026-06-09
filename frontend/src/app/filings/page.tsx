@@ -5,7 +5,8 @@ import { api, type FilingsResponse } from "@/lib/api";
 import FilingsTable from "@/components/FilingsTable";
 import { ErrorBox, Loading, Panel } from "@/components/Panel";
 
-const TICKERS = ["", "QCOM", "AMD", "NVDA", "INTC", "AVGO"];
+// Fallback only if GET /companies fails; the live list comes from the API.
+const FALLBACK_TICKERS = ["QCOM", "AMD", "NVDA", "INTC", "AVGO"];
 const STATUSES = ["", "detected", "downloaded", "parsed", "chunked", "failed"];
 const LIMITS = [10, 25, 50, 100];
 
@@ -20,9 +21,31 @@ export default function FilingsPage() {
   const [data, setData] = useState<FilingsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [tickers, setTickers] = useState<string[] | null>(null);
 
   const queryKey = `${ticker}|${status}|${limit}`;
   const loading = loadedFor !== queryKey;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCompanies() {
+      try {
+        const result = await api.getCompanies();
+        if (!cancelled) {
+          setTickers(result.companies.map((c) => c.ticker));
+        }
+      } catch {
+        // Companies endpoint unavailable — fall back to the known watchlist.
+        if (!cancelled) setTickers(FALLBACK_TICKERS);
+      }
+    }
+
+    loadCompanies();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,11 +95,13 @@ export default function FilingsPage() {
               <select
                 className={`ml-1.5 ${selectClass}`}
                 value={ticker}
+                disabled={tickers === null}
                 onChange={(e) => setTicker(e.target.value)}
               >
-                {TICKERS.map((t) => (
+                <option value="">{tickers === null ? "loading…" : "all"}</option>
+                {(tickers ?? []).map((t) => (
                   <option key={t} value={t}>
-                    {t || "all"}
+                    {t}
                   </option>
                 ))}
               </select>

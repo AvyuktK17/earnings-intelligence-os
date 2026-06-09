@@ -15,6 +15,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 from fastapi.testclient import TestClient
 
 from app.main import app
+
+# Protected write endpoints require the admin token; use a private
+# temporary one for this test run (never printed).
+import secrets as _secrets
+os.environ.setdefault("ADMIN_API_TOKEN", _secrets.token_urlsafe(32))
+_ADMIN_HEADERS = {"X-Admin-Token": os.environ["ADMIN_API_TOKEN"]}
 from src.database import get_supabase_client
 
 TICKER = "AVGO"
@@ -23,7 +29,7 @@ INVALID_ACCESSION = "0000000000-00-000000"
 
 
 def main() -> None:
-    client = TestClient(app)
+    client = TestClient(app, headers=_ADMIN_HEADERS)
     supabase = get_supabase_client()
 
     # Snapshot existing brief rows for this accession.

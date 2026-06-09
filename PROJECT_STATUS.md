@@ -113,9 +113,18 @@ documents and exhibits idempotently.
 `uvicorn app.main:app --reload`. Uses `src.database.get_supabase_client()`
 via a single `lru_cache`d client. No authentication yet. Not deployed.
 
-Read endpoints:
+Authentication (MVP admin token): every write endpoint requires the
+`X-Admin-Token` header to match the `ADMIN_API_TOKEN` env var, compared
+with `secrets.compare_digest`. Missing/wrong header → 401
+("Admin token missing or invalid."); server token unconfigured → generic
+500 ("Server configuration error.") that never names the variable. Read
+endpoints are public. No user accounts yet.
+
+Read endpoints (public):
 
 * `GET /health` — liveness
+* `GET /companies` — watchlist (ticker, company_name, cik, business_model)
+  ordered by ticker; feeds the dashboard's filings filter
 * `GET /filings?ticker=&status=&limit=` — filing feed, newest first; ticker
   uppercased; `limit` validated with `Query(ge=1, le=100)` (422 outside range)
 * `GET /filings/{accession_number}` — filing + `filing_documents` + chunk
@@ -124,7 +133,7 @@ Read endpoints:
 * `GET /review-queue` — grounded pending claims only; ungrounded legacy rows
   (`source_chunk_id` null) are never exposed
 
-Write endpoints (analyst workflow):
+Write endpoints (analyst workflow; all require `X-Admin-Token`):
 
 * `POST /review-queue/{claim_id}/approve` — optional `{"reviewer_notes"}`;
   404 unknown claim, 400 ungrounded
@@ -167,13 +176,20 @@ Brief).
 * the browser talks only to the FastAPI service, never to Supabase
 * shared typed client in `src/lib/api.ts` with explicit loading and error
   states on every page
+* **Admin Access panel** at the bottom of the sidebar: token input with
+  Save/Clear and a connected indicator. The token lives in browser session
+  storage only (never committed, never in a `NEXT_PUBLIC_` variable) and is
+  attached as `X-Admin-Token` to protected POSTs only; a 401 surfaces as
+  "Admin token missing or invalid."
 
 Routes:
 
 * `/` — overview: stat cards (recent filings, chunked, pending grounded
   claims, latest AVGO brief version) + latest-filings table; a missing brief
   renders as "—", not an error
-* `/filings` — feed with ticker/status/limit filters and status badges
+* `/filings` — feed with ticker/status/limit filters and status badges;
+  the ticker list loads dynamically from `GET /companies` (with a static
+  fallback if the endpoint fails)
 * `/filings/[accessionNumber]` — full filing metadata, timestamps,
   processing error, document list with Storage flags, chunk count
 * `/review-queue` — grounded pending claims grouped by filing; approve /
@@ -183,13 +199,30 @@ Routes:
 * `/briefs/latest/[ticker]` — brief metadata cards + rendered markdown;
   "Generate new brief version" button refreshes to the new version
 
+## Deployment preparation (complete — NOT deployed)
+
+* `render.yaml` blueprint: Python web service, health check on `/health`,
+  start command `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+  (verified locally with `--host 0.0.0.0 --port ${PORT:-8000}`)
+* backend env vars: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SEC_USER_AGENT`,
+  `GEMINI_API_KEY`, `GEMINI_MODEL` (optional, default `gemini-2.5-flash` —
+  now read from the environment by the extraction modules), `ALLOWED_ORIGINS`
+  (set to the deployed frontend origin), `ADMIN_API_TOKEN`
+* frontend env var: `NEXT_PUBLIC_API_BASE_URL` (production-safe
+  `frontend/.env.example` documents it)
+* the deployed API never calls Gemini (extraction stays manual); scheduled
+  SEC ingestion stays in GitHub Actions
+
 ## Tests
 
 Script-style tests run with `python test_*.py` against live Supabase data.
 API tests: `test_api_health.py`, `test_api_filings.py`, `test_api_briefs.py`,
-`test_api_review_queue.py`, `test_api_review_actions.py`,
-`test_api_promotion.py` (global + scoped modes), `test_api_brief_generation.py`,
-`test_api_cors.py`. Write-endpoint tests
+`test_api_review_queue.py`, `test_api_companies.py`, `test_api_cors.py`,
+`test_api_auth.py` (public reads, 401s, correct-token action, fail-closed
+500), `test_api_review_actions.py`,
+`test_api_promotion.py` (global + scoped modes), `test_api_brief_generation.py`.
+Write-endpoint tests supply a temporary admin token via the environment
+(never printed),
 insert clearly marked temporary rows and delete them in `finally` blocks;
 real trusted AVGO claims and the persisted v1 brief are never modified.
 Frontend checks: `cd frontend && npm run lint && npm run build`.
@@ -207,8 +240,9 @@ deprecated; install httpx2 instead.` — harmless, left as-is.
 
 ## Next milestone
 
-* Add authentication and deploy the MVP (API + dashboard). The API currently
-  has no auth and must stay local until then.
+* Deploy backend and frontend, configure production CORS
+  (`ALLOWED_ORIGINS` = deployed frontend origin), and smoke-test the live
+  application.
 
 ## Safety rules
 
@@ -219,4 +253,7 @@ deprecated; install httpx2 instead.` — harmless, left as-is.
   promotion only happens after human review
 * Require exact grounded excerpts after whitespace normalization
 * Keep AI extraction manual until quality is reviewed
-* No authentication on the API yet — do not deploy it publicly
+* Write endpoints require the admin token; keep `ADMIN_API_TOKEN` private
+  and never commit or print it
+* Not deployed yet — deploy only with production CORS and the admin token
+  configured as deployment secrets

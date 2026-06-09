@@ -1,0 +1,29 @@
+# Render blueprint for the Earnings Intelligence OS API.
+# Deployment is prepared but NOT yet performed. The frontend deploys
+# separately (e.g. Vercel) with NEXT_PUBLIC_API_BASE_URL pointing here.
+# Scheduled SEC ingestion stays in GitHub Actions, and Gemini extraction
+# remains manual — the deployed API never calls Gemini.
+
+services:
+  - type: web
+    name: earnings-intelligence-os-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SEC_USER_AGENT
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: ALLOWED_ORIGINS
+        sync: false # set to the deployed frontend origin(s)
+      - key: ADMIN_API_TOKEN
+        sync: false

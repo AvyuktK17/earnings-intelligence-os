@@ -1,3 +1,4 @@
+import os
 import json
 import re
 
@@ -6,7 +7,7 @@ from google.genai import types
 from src.database import get_supabase_client
 from src.llm_client import get_gemini_client
 
-_MODEL = "gemini-2.5-flash"
+_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 _ALLOWED_CLAIM_TYPES = {"factual", "interpretive"}
 

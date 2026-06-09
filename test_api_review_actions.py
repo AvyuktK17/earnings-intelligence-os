@@ -13,6 +13,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 from fastapi.testclient import TestClient
 
 from app.main import app
+
+# Protected write endpoints require the admin token; use a private
+# temporary one for this test run (never printed).
+import secrets as _secrets
+os.environ.setdefault("ADMIN_API_TOKEN", _secrets.token_urlsafe(32))
+_ADMIN_HEADERS = {"X-Admin-Token": os.environ["ADMIN_API_TOKEN"]}
 from src.database import get_supabase_client
 
 ACCESSION = "0001730168-26-000051"
@@ -40,7 +46,7 @@ def insert_temp_claim(supabase, filing_id, chunk, grounded: bool = True) -> int:
 
 
 def main() -> None:
-    client = TestClient(app)
+    client = TestClient(app, headers=_ADMIN_HEADERS)
     supabase = get_supabase_client()
 
     filing_id = (
