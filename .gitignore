@@ -5,3 +5,4 @@ __pycache__/
 data/raw_filings/
 data/parsed_filings/
 data/chunking_inputs/
+output/briefs/
