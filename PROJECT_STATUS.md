@@ -504,9 +504,66 @@ transliterated for the PDF only; the stored Markdown and HTML keep full Unicode.
 ### Limitations (Bundle B1)
 
 No live valuation feed (dated snapshots only); no forecasts; no DCF; no target
-price; no rating; no automatic Claude/Gemini usage. Next milestone: **Bundle B2
-— custom Claude equity-research skill and optional human-reviewed narrative
-assist** (off by default; never writes to trusted tables).
+price; no rating; no automatic Claude/Gemini usage.
+
+## Claude equity-research skill & report packets (Bundle B2.1, complete)
+
+A reusable Claude Code skill plus a deterministic report-packet exporter. **No
+Claude API is called and no narrative is generated automatically.** The analyst
+exports a trusted-data packet, then invokes the skill in Claude Code to draft a
+narrative locally for review. Nothing is uploaded or written to Supabase.
+
+### Deterministic report-packet exporter
+
+`src/report_packet.py` + `export_report_packet.py` + `test_report_packet.py`:
+
+* `export_report_packet(ticker, accession_number=None,
+  output_dir="output/report_packets")` bundles one filing's trusted and
+  deterministic facts into `{ticker_lower}_{safe_accession}_packet.md` and
+  `.json`. Sources only: company profile (`companies`), selected filing
+  metadata (`filings`), trusted promoted grounded claims (`qualitative_claims`)
+  with source references / chunk ids / supporting excerpts, latest + historical
+  `financial_metrics`, the deterministic peer comparison, the dated
+  `valuation_snapshots`, and any existing `research_reports` metadata
+* reuses the deterministic report engine's trusted-source accessors
+  (`src.research_report`) so the two never disagree on what is a trusted claim
+* deterministic output (stable ordering, sorted-key JSON); no LLM call, no
+  database writes, no secrets; missing values labelled "Not available"
+* accession defaults to the most recent filing with trusted claims (same
+  selection as the report engine); returns ticker, accession, markdown/JSON
+  paths, trusted-claim/metric/evidence-link counts, and valuation snapshot date
+* CLI: `python export_report_packet.py --ticker AVGO --accession-number
+  0001730168-26-000051`. Live result: AVGO `0001730168-26-000051` packet exports
+  5 trusted claims, 21 metric series, 5 evidence links, snapshot date 2026-06-04
+* output dir `output/report_packets/` is gitignored
+
+### Claude Code skill
+
+`.claude/skills/semiconductor-equity-research-report/` (`SKILL.md`,
+`template.md`, `quality-checklist.md`) — invocable as
+`/semiconductor-equity-research-report`. Drafts a professional earnings-update
+narrative (Front-page Executive Summary · Quarterly Results · Guidance and
+Outlook · Historical Trends · Peer Comparison · Balance Sheet and FCF ·
+Valuation Snapshot · Catalysts · Risks and Watch Items · Evidence Appendix ·
+Methodology) **only** from a supplied report packet. `template.md` and
+`quality-checklist.md` load only when the skill runs, keeping routine Claude
+Code sessions token-efficient. Guardrails: never invent a rating, target price,
+forecast, DCF output, or consensus estimate; always label valuation as a dated
+manually reviewed snapshot; distinguish reported facts from interpretation;
+cite source references and chunk ids; preserve missing values honestly; label
+the output `Claude-assisted draft for analyst review`; never write to trusted
+tables. The result is a local draft only.
+
+The `.gitignore` now ignores all personal `.claude/` state (settings.local.json,
+memory, credentials) **except** this shareable skill directory, which is the
+only `.claude/` content committed. The Jazz reference PDF stays in `/tmp` and is
+never committed.
+
+### Limitations (Bundle B2.1)
+
+No Claude API call yet, no automatic narrative generation, no persistence of the
+drafted narrative. Next milestone: **Bundle B2.2 — optional human-reviewed
+Claude-API narrative assist** (off by default; never writes to trusted tables).
 
 ## Deployment (complete — MVP live)
 
@@ -551,7 +608,10 @@ payloads), `test_claim_extraction_status.py`,
 (auth, validation, 404/400/429/safe-500 mapping, and the
 promotion-driven `approved` lifecycle), `test_api_company_detail.py`,
 `test_api_overview.py` (totals consistent with per-company rows),
-`test_api_admin_validate.py`, and `test_cleanup_legacy_claims.py`
+`test_api_admin_validate.py`, `test_report_packet.py` (deterministic
+report-packet exporter: trusted-claims-only, grounding, determinism across
+reruns, honest missing-data labelling; writes to a temp dir, never calls an
+LLM), and `test_cleanup_legacy_claims.py`
 (dry-run safety only — the destructive mode is never run by tests).
 Every extraction test
 monkeypatches the Gemini-backed extractor — automated tests never consume

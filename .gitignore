@@ -1,9 +1,17 @@
 .env
 .venv/
 __pycache__/
-.claude/
+
+# Ignore all local/personal Claude Code state (settings.local.json, memory,
+# credentials) EXCEPT the shareable project skill, which is committed.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/semiconductor-equity-research-report/
+
 data/raw_filings/
 data/parsed_filings/
 data/chunking_inputs/
 output/briefs/
 output/reports/
+output/report_packets/

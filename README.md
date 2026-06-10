@@ -217,6 +217,63 @@ python generate_research_report.py AVGO              # generate + store
 python generate_research_report.py AVGO --dry-run    # print markdown, no writes
 ```
 
+### Claude equity-research skill & report packets (Bundle B2.1)
+
+A reusable Claude Code skill plus a deterministic *report-packet* exporter.
+**No Claude API is called and no automatic narrative is generated** — a human
+analyst runs the exporter, then invokes the skill in Claude Code to draft a
+narrative locally for review.
+
+**Report-packet exporter (`export_report_packet.py` / `src/report_packet.py`).**
+Bundles every trusted, human-reviewed claim and every audited deterministic
+figure for one filing into a Markdown file plus a JSON sibling under
+`output/report_packets/` (gitignored). Sources only: company profile, selected
+filing metadata, trusted promoted claims with source references / chunk ids /
+supporting excerpts, latest + historical `financial_metrics`, the peer
+comparison, the dated `valuation_snapshots`, and any existing deterministic
+report's metadata. Output is deterministic (stable ordering, sorted-key JSON),
+calls no LLM, writes no database rows, exposes no secrets, and labels missing
+values honestly.
+
+```bash
+python export_report_packet.py --ticker AVGO --accession-number 0001730168-26-000051
+# omit --accession-number to use the most recent filing with trusted claims
+```
+
+It prints the markdown and JSON paths plus counts (trusted claims, metrics,
+evidence links) and the valuation snapshot date.
+
+**Skill (`.claude/skills/semiconductor-equity-research-report/`).** Invoke in
+Claude Code as `/semiconductor-equity-research-report` and provide the generated
+markdown packet path. The skill (`SKILL.md` + `template.md` +
+`quality-checklist.md`, the latter two loaded only when the skill runs so
+routine sessions stay token-efficient) drafts a professional earnings-update
+narrative — Front-page Executive Summary · Quarterly Results · Guidance and
+Outlook · Historical Trends · Peer Comparison · Balance Sheet and FCF ·
+Valuation Snapshot · Catalysts · Risks and Watch Items · Evidence Appendix ·
+Methodology — **only** from the supplied packet. Guardrails: never invent a
+rating, target price, forecast, DCF, or consensus estimate; always label
+valuation as a dated, manually reviewed snapshot; distinguish reported facts
+from interpretation; cite source references and chunk ids; preserve missing
+values; label the output `Claude-assisted draft for analyst review`; and never
+write to trusted tables. The result is a **local draft only** — not uploaded,
+not persisted to Supabase.
+
+**Analyst workflow:**
+
+```bash
+python export_report_packet.py --ticker AVGO --accession-number 0001730168-26-000051
+```
+
+then, in Claude Code:
+
+```text
+/semiconductor-equity-research-report
+```
+
+and provide the printed markdown packet path. The skill produces a local
+`Claude-assisted draft for analyst review`; review it before any downstream use.
+
 ### Manual claim extraction (admin-triggered)
 
 `POST /extraction-ready/{accession_number}/extract` (optional body
@@ -345,7 +402,10 @@ and clean up after themselves, supplying a temporary admin token through the
 environment (never printed). The quantitative endpoints are covered by
 `test_api_metrics.py`, `test_api_peers.py`, and
 `test_api_valuation_snapshots.py`; the backfill parser/idempotency logic is
-covered offline by `test_static_dashboard_backfill.py`.
+covered offline by `test_static_dashboard_backfill.py`. The deterministic
+report-packet exporter is covered by `test_report_packet.py` (trusted-claims-only,
+grounding, determinism across reruns, and honest missing-data labelling; writes
+to a temp dir and never calls an LLM).
 
 ## Roadmap
 
@@ -358,6 +418,13 @@ covered offline by `test_static_dashboard_backfill.py`.
   with versioning, Storage persistence (Markdown/HTML/PDF), and report viewing
   pages. Limitations: no live valuation feed, no forecasts, no DCF, no target
   price, no rating, and no automatic Claude/Gemini usage.
-- **Bundle B2 — Claude equity-research skill (next):** an optional, human-
-  reviewed Claude-assisted narrative layer on top of the deterministic report
-  (off by default; never writes to trusted tables).
+- **Bundle B2.1 — Claude equity-research skill & report packets (complete):**
+  a reusable `/semiconductor-equity-research-report` Claude Code skill plus a
+  deterministic `export_report_packet.py` exporter. The analyst exports a
+  trusted-data packet, then invokes the skill in Claude Code to draft a local
+  `Claude-assisted draft for analyst review`. No Claude API calls, no automatic
+  narrative generation, no database writes; guardrails forbid invented ratings,
+  target prices, forecasts, DCF, and consensus estimates.
+- **Bundle B2.2 — Claude API narrative assist (next):** an optional, human-
+  reviewed Claude-API narrative layer on top of the deterministic report (off
+  by default; never writes to trusted tables).
