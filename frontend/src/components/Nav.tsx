@@ -12,6 +12,8 @@ const LINKS = [
   { href: "/filings", label: "Filings" },
   { href: "/extraction-ready", label: "Extraction Ready" },
   { href: "/review-queue", label: "Review Queue" },
+  { href: "/evidence", label: "Evidence Explorer" },
+  { href: "/reports", label: "Reports" },
   { href: "/briefs/latest/AVGO", label: "Latest Brief" },
 ];
 

@@ -336,6 +336,97 @@ export interface ValuationSnapshotsResponse {
   valuation_disclaimer: string;
 }
 
+// --- Evidence Explorer & research reports (Bundle B1) --------------------
+
+export interface EvidenceItem {
+  qualitative_claim_id: number;
+  ticker: string;
+  theme: string | null;
+  claim: string;
+  supporting_excerpt: string | null;
+  source_reference: string | null;
+  source_chunk_id: number | null;
+  document_key: string | null;
+  factual_or_interpretive: string | null;
+  confidence: string | null;
+  human_reviewed: boolean | string | null;
+  accession_number: string | null;
+  filing_date: string | null;
+  sec_url: string | null;
+}
+
+export interface EvidenceListResponse {
+  count: number;
+  evidence: EvidenceItem[];
+}
+
+export interface EvidenceDetail {
+  claim: EvidenceItem & { qualitative_claim_id: number };
+  chunk_text: string | null;
+  chunk: Record<string, unknown> | null;
+  document: FilingDocument | null;
+  filing: {
+    accession_number: string;
+    form: string;
+    filing_date: string | null;
+    report_date: string | null;
+    sec_url: string | null;
+  } | null;
+  sec_url: string | null;
+}
+
+export interface ReportMeta {
+  id: number;
+  ticker: string;
+  accession_number: string | null;
+  report_type: string;
+  report_status: string;
+  version_number: number;
+  title: string;
+  source_claim_count: number;
+  source_metric_count: number;
+  valuation_snapshot_date: string | null;
+  generator_type: string;
+  pdf_storage_path: string | null;
+  generated_at: string;
+  pdf_available?: boolean;
+}
+
+export interface ReportsResponse {
+  count: number;
+  reports: ReportMeta[];
+}
+
+export interface ReportEvidenceLink {
+  id: number;
+  research_report_id: number;
+  qualitative_claim_id: number | null;
+  source_chunk_id: number | null;
+  accession_number: string | null;
+  document_key: string | null;
+  section_name: string | null;
+  supporting_excerpt: string | null;
+}
+
+export interface ReportDetail extends ReportMeta {
+  markdown_content: string;
+  html_content: string;
+  evidence_links: ReportEvidenceLink[];
+}
+
+export interface ReportGenerateResult {
+  report_id: number;
+  ticker: string;
+  accession_number: string | null;
+  report_type: string;
+  version_number: number;
+  title: string;
+  source_claim_count: number;
+  source_metric_count: number;
+  evidence_link_count: number;
+  pdf_storage_path: string;
+}
+
 export class ApiError extends Error {
   status: number;
 
@@ -512,5 +603,79 @@ export const api = {
 
   getValuationSnapshots() {
     return request<ValuationSnapshotsResponse>("/valuation-snapshots");
+  },
+
+  // --- Evidence Explorer & research reports -----------------------------
+
+  getEvidence(params?: {
+    ticker?: string;
+    accession_number?: string;
+    theme?: string;
+    claim_type?: string;
+    confidence?: string;
+    document_key?: string;
+    limit?: number;
+  }) {
+    const search = new URLSearchParams();
+    if (params?.ticker) search.set("ticker", params.ticker);
+    if (params?.accession_number)
+      search.set("accession_number", params.accession_number);
+    if (params?.theme) search.set("theme", params.theme);
+    if (params?.claim_type) search.set("claim_type", params.claim_type);
+    if (params?.confidence) search.set("confidence", params.confidence);
+    if (params?.document_key) search.set("document_key", params.document_key);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const qs = search.toString();
+    return request<EvidenceListResponse>(`/evidence${qs ? `?${qs}` : ""}`);
+  },
+
+  getEvidenceDetail(claimId: number) {
+    return request<EvidenceDetail>(`/evidence/${claimId}`);
+  },
+
+  getReports(params?: {
+    ticker?: string;
+    report_type?: string;
+    report_status?: string;
+  }) {
+    const search = new URLSearchParams();
+    if (params?.ticker) search.set("ticker", params.ticker);
+    if (params?.report_type) search.set("report_type", params.report_type);
+    if (params?.report_status) search.set("report_status", params.report_status);
+    const qs = search.toString();
+    return request<ReportsResponse>(`/reports${qs ? `?${qs}` : ""}`);
+  },
+
+  getLatestReport(ticker: string, reportType?: string) {
+    const qs = reportType
+      ? `?report_type=${encodeURIComponent(reportType)}`
+      : "";
+    return request<ReportDetail>(
+      `/reports/latest/${encodeURIComponent(ticker)}${qs}`,
+    );
+  },
+
+  getReport(reportId: number) {
+    return request<ReportDetail>(`/reports/${reportId}`);
+  },
+
+  /** Direct backend route that 307-redirects to a short-lived signed PDF URL. */
+  reportPdfUrl(reportId: number) {
+    return `${API_BASE_URL}/reports/${reportId}/pdf`;
+  },
+
+  generateReport(body: {
+    ticker: string;
+    accession_number?: string | null;
+    report_type?: string;
+  }) {
+    return request<ReportGenerateResult>("/reports/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        ticker: body.ticker,
+        accession_number: body.accession_number ?? null,
+        report_type: body.report_type ?? "earnings_update",
+      }),
+    });
   },
 };

@@ -17,12 +17,15 @@ from functools import lru_cache
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from src.brief_storage import generate_and_store_earnings_brief
 from src.claim_promotion import promote_reviewed_claims
 from src.claim_review import approve_claim, approve_claim_with_edits, reject_claim
 from src.database import get_supabase_client
+from src.research_report_storage import generate_and_store_research_report
+from src.storage import create_signed_url
 from src.quantitative import (
     PEER_METRIC_FIELDS,
     build_metric_series,
@@ -107,6 +110,28 @@ _VALUATION_DISCLAIMER = (
     "market feed."
 )
 
+# Trusted, grounded, promoted claim columns (qualitative_claims has no id
+# column; the stable identifier is proposed_claim_id).
+EVIDENCE_COLUMNS = (
+    "proposed_claim_id, ticker, theme, claim, supporting_excerpt, "
+    "source_reference, source_chunk_id, document_key, factual_or_interpretive, "
+    "confidence, human_reviewed"
+)
+
+# Report metadata for the index (excludes the large markdown/html bodies).
+REPORT_META_COLUMNS = (
+    "id, ticker, accession_number, report_type, report_status, version_number, "
+    "title, source_claim_count, source_metric_count, valuation_snapshot_date, "
+    "generator_type, pdf_storage_path, generated_at"
+)
+
+REPORT_FULL_COLUMNS = REPORT_META_COLUMNS + ", markdown_content, html_content"
+
+REPORT_EVIDENCE_COLUMNS = (
+    "id, research_report_id, qualitative_claim_id, source_chunk_id, "
+    "accession_number, document_key, section_name, supporting_excerpt"
+)
+
 
 @lru_cache(maxsize=1)
 def _supabase():
@@ -117,7 +142,12 @@ def _supabase():
 # ValueError messages from src modules that mean "resource does not exist".
 # Everything else (grounding failures, empty edits, no trusted claims) is a
 # bad request.
-_NOT_FOUND_PREFIXES = ("No proposed claim found", "No filing found")
+_NOT_FOUND_PREFIXES = (
+    "No proposed claim found",
+    "No filing found",
+    "No monitored company found",
+    "No research report found",
+)
 
 # Public stand-in for claim_extraction_error: the raw provider text stays in
 # Supabase for admin debugging but must never leave through a public GET.
@@ -177,6 +207,12 @@ class PromoteClaimsRequest(BaseModel):
 
 class ExtractClaimsRequest(BaseModel):
     max_claims: int = Field(default=5, ge=1, le=10)
+
+
+class GenerateReportRequest(BaseModel):
+    ticker: str = Field(min_length=1)
+    accession_number: str | None = None
+    report_type: str = "earnings_update"
 
 
 @app.get("/health")
@@ -658,6 +694,302 @@ def get_valuation_snapshots() -> dict:
         "valuation_snapshot_dates": snapshot_dates,
         "valuation_disclaimer": _VALUATION_DISCLAIMER,
     }
+
+
+# --- Evidence Explorer (trusted promoted claims only) --------------------
+
+
+def _provenance_maps(supabase, chunk_ids: list[int]) -> tuple[dict, dict]:
+    """Recover (chunk_id -> chunk row) and (accession -> filing row) maps."""
+    ids = [c for c in chunk_ids if c is not None]
+    if not ids:
+        return {}, {}
+    chunks = (
+        supabase.table("filing_chunks")
+        .select("id, accession_number, document_key, filing_document_id, chunk_text")
+        .in_("id", ids)
+        .execute()
+        .data
+    )
+    chunk_map = {c["id"]: c for c in chunks}
+    accessions = sorted({c["accession_number"] for c in chunks if c["accession_number"]})
+    filing_map = {}
+    if accessions:
+        filings = (
+            supabase.table("filings")
+            .select("accession_number, form, filing_date, report_date, sec_url")
+            .in_("accession_number", accessions)
+            .execute()
+            .data
+        )
+        filing_map = {f["accession_number"]: f for f in filings}
+    return chunk_map, filing_map
+
+
+@app.get("/evidence")
+def list_evidence(
+    ticker: str | None = None,
+    accession_number: str | None = None,
+    theme: str | None = None,
+    claim_type: str | None = None,
+    confidence: str | None = None,
+    document_key: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict:
+    """Return trusted, promoted, grounded evidence claims.
+
+    Only human-reviewed claims that were promoted (``proposed_claim_id`` set)
+    and grounded (``source_chunk_id`` set) are returned. Pending proposed
+    claims, rejected drafts, and ungrounded legacy rows are never exposed.
+    """
+    supabase = _supabase()
+    query = (
+        supabase.table("qualitative_claims")
+        .select(EVIDENCE_COLUMNS)
+        .not_.is_("proposed_claim_id", "null")
+        .not_.is_("source_chunk_id", "null")
+    )
+    if ticker is not None:
+        query = query.eq("ticker", ticker.upper())
+    if theme is not None:
+        query = query.eq("theme", theme)
+    if claim_type is not None:
+        query = query.eq("factual_or_interpretive", claim_type)
+    if confidence is not None:
+        query = query.eq("confidence", confidence)
+    if document_key is not None:
+        query = query.eq("document_key", document_key)
+    if accession_number is not None:
+        query = query.like("source_reference", f"%{accession_number}%")
+
+    rows = (
+        query.order("proposed_claim_id", desc=True).limit(limit).execute().data
+    )
+    chunk_map, filing_map = _provenance_maps(
+        supabase, [r["source_chunk_id"] for r in rows]
+    )
+
+    results = []
+    for row in rows:
+        chunk = chunk_map.get(row["source_chunk_id"], {})
+        accession = chunk.get("accession_number")
+        filing = filing_map.get(accession, {})
+        results.append(
+            {
+                "qualitative_claim_id": row["proposed_claim_id"],
+                "ticker": row["ticker"],
+                "theme": row["theme"],
+                "claim": row["claim"],
+                "supporting_excerpt": row["supporting_excerpt"],
+                "source_reference": row["source_reference"],
+                "source_chunk_id": row["source_chunk_id"],
+                "document_key": row["document_key"],
+                "factual_or_interpretive": row["factual_or_interpretive"],
+                "confidence": row["confidence"],
+                "human_reviewed": row["human_reviewed"],
+                "accession_number": accession,
+                "filing_date": filing.get("filing_date"),
+                "sec_url": filing.get("sec_url"),
+            }
+        )
+    return {"count": len(results), "evidence": results}
+
+
+@app.get("/evidence/{claim_id}")
+def get_evidence(claim_id: int) -> dict:
+    """Return one trusted claim with its exact chunk text and provenance."""
+    supabase = _supabase()
+    claims = (
+        supabase.table("qualitative_claims")
+        .select(EVIDENCE_COLUMNS)
+        .eq("proposed_claim_id", claim_id)
+        .not_.is_("source_chunk_id", "null")
+        .execute()
+        .data
+    )
+    if not claims:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No trusted evidence claim found with id={claim_id}.",
+        )
+    claim = claims[0]
+
+    chunk_rows = (
+        supabase.table("filing_chunks")
+        .select(
+            "id, accession_number, document_key, chunk_index, chunk_text, "
+            "character_count, filing_document_id"
+        )
+        .eq("id", claim["source_chunk_id"])
+        .execute()
+        .data
+    )
+    chunk = chunk_rows[0] if chunk_rows else None
+
+    document = None
+    filing = None
+    if chunk:
+        if chunk.get("filing_document_id"):
+            docs = (
+                supabase.table("filing_documents")
+                .select(DOCUMENT_COLUMNS)
+                .eq("id", chunk["filing_document_id"])
+                .execute()
+                .data
+            )
+            document = docs[0] if docs else None
+        filings = (
+            supabase.table("filings")
+            .select("accession_number, form, filing_date, report_date, sec_url")
+            .eq("accession_number", chunk["accession_number"])
+            .execute()
+            .data
+        )
+        filing = filings[0] if filings else None
+
+    return {
+        "claim": {
+            "qualitative_claim_id": claim["proposed_claim_id"],
+            "ticker": claim["ticker"],
+            "theme": claim["theme"],
+            "claim": claim["claim"],
+            "supporting_excerpt": claim["supporting_excerpt"],
+            "source_reference": claim["source_reference"],
+            "source_chunk_id": claim["source_chunk_id"],
+            "document_key": claim["document_key"],
+            "factual_or_interpretive": claim["factual_or_interpretive"],
+            "confidence": claim["confidence"],
+            "human_reviewed": claim["human_reviewed"],
+        },
+        "chunk_text": chunk["chunk_text"] if chunk else None,
+        "chunk": chunk,
+        "document": document,
+        "filing": filing,
+        "sec_url": (filing or {}).get("sec_url"),
+    }
+
+
+# --- Research reports (deterministic, versioned) -------------------------
+
+
+@app.get("/reports")
+def list_reports(
+    ticker: str | None = None,
+    report_type: str | None = None,
+    report_status: str | None = None,
+) -> dict:
+    """Return stored research-report metadata, newest first."""
+    query = _supabase().table("research_reports").select(REPORT_META_COLUMNS)
+    if ticker is not None:
+        query = query.eq("ticker", ticker.upper())
+    if report_type is not None:
+        query = query.eq("report_type", report_type)
+    if report_status is not None:
+        query = query.eq("report_status", report_status)
+    rows = query.order("generated_at", desc=True).execute().data
+    for row in rows:
+        row["pdf_available"] = bool(row.get("pdf_storage_path"))
+    return {"count": len(rows), "reports": rows}
+
+
+def _report_evidence_links(supabase, report_id: int) -> list[dict]:
+    return (
+        supabase.table("report_evidence_links")
+        .select(REPORT_EVIDENCE_COLUMNS)
+        .eq("research_report_id", report_id)
+        .order("id", desc=False)
+        .execute()
+        .data
+    )
+
+
+@app.get("/reports/latest/{ticker}")
+def get_latest_report(ticker: str, report_type: str = "earnings_update") -> dict:
+    """Return the latest stored report for a ticker; 404 when none exists."""
+    supabase = _supabase()
+    rows = (
+        supabase.table("research_reports")
+        .select(REPORT_FULL_COLUMNS)
+        .eq("ticker", ticker.upper())
+        .eq("report_type", report_type)
+        .order("version_number", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No research report found for ticker={ticker.upper()!r}.",
+        )
+    report = rows[0]
+    report["evidence_links"] = _report_evidence_links(supabase, report["id"])
+    return report
+
+
+@app.get("/reports/{report_id}")
+def get_report(report_id: int) -> dict:
+    """Return one stored report with content, evidence links, and PDF path."""
+    supabase = _supabase()
+    rows = (
+        supabase.table("research_reports")
+        .select(REPORT_FULL_COLUMNS)
+        .eq("id", report_id)
+        .execute()
+        .data
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No research report found with id={report_id}.",
+        )
+    report = rows[0]
+    report["evidence_links"] = _report_evidence_links(supabase, report_id)
+    return report
+
+
+@app.get("/reports/{report_id}/pdf")
+def get_report_pdf(report_id: int) -> RedirectResponse:
+    """Redirect to a short-lived signed URL for the report PDF.
+
+    Keeps the private Storage bucket closed: the browser never sees the bucket,
+    only a temporary signed link.
+    """
+    supabase = _supabase()
+    rows = (
+        supabase.table("research_reports")
+        .select("pdf_storage_path")
+        .eq("id", report_id)
+        .execute()
+        .data
+    )
+    if not rows or not rows[0].get("pdf_storage_path"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No report PDF found for id={report_id}.",
+        )
+    try:
+        url = create_signed_url(rows[0]["pdf_storage_path"], expires_in=300)
+    except Exception:
+        # Never leak Storage internals or credentials.
+        raise HTTPException(status_code=500, detail="Could not produce a PDF link.")
+    return RedirectResponse(url=url, status_code=307)
+
+
+@app.post("/reports/generate", dependencies=[Depends(require_admin_token)])
+def generate_report(request: GenerateReportRequest) -> dict:
+    """Generate, render, and persist a versioned deterministic report (admin)."""
+    try:
+        return generate_and_store_research_report(
+            ticker=request.ticker,
+            accession_number=request.accession_number,
+            report_type=request.report_type,
+        )
+    except ValueError as exc:
+        raise _http_error(exc)
+    except Exception:
+        # No secrets, stack traces, or provider details to callers.
+        raise HTTPException(status_code=500, detail="Report generation failed.")
 
 
 @app.get("/admin/validate", dependencies=[Depends(require_admin_token)])

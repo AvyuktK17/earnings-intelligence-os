@@ -41,6 +41,31 @@ def upload_file(local_path: str, storage_path: str) -> dict:
     }
 
 
+def create_signed_url(storage_path: str, expires_in: int = 3600) -> str:
+    """Create a short-lived signed URL for a private Storage object.
+
+    Lets the browser download a private object (e.g. a report PDF) without ever
+    exposing the bucket publicly or leaking credentials. The URL expires after
+    ``expires_in`` seconds.
+
+    Raises:
+        RuntimeError: If the object is missing or the signed URL cannot be made.
+    """
+    supabase = get_supabase_client()
+    bucket = supabase.storage.from_(BUCKET_NAME)
+    try:
+        result = bucket.create_signed_url(storage_path, expires_in)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to sign '{storage_path}' in bucket '{BUCKET_NAME}': {exc}"
+        ) from exc
+    # The client returns the URL under one of these keys depending on version.
+    url = result.get("signedURL") or result.get("signedUrl") or result.get("signed_url")
+    if not url:
+        raise RuntimeError(f"No signed URL returned for '{storage_path}'.")
+    return url
+
+
 def download_file(storage_path: str, local_path: str) -> str:
     """Download a file from the private Supabase Storage bucket.
 

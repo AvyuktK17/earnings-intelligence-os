@@ -66,7 +66,9 @@ no user accounts yet.
 **Public (GET, no token):** `/health`, `/companies`, `/companies/{ticker}`,
 `/overview`, `/filings`, `/filings/{accession_number}`,
 `/briefs/latest/{ticker}`, `/review-queue`, `/extraction-ready`,
-`/metrics/{ticker}`, `/peers`, `/peers/trends`, `/valuation-snapshots`.
+`/metrics/{ticker}`, `/peers`, `/peers/trends`, `/valuation-snapshots`,
+`/evidence`, `/evidence/{claim_id}`, `/reports`, `/reports/latest/{ticker}`,
+`/reports/{report_id}`, `/reports/{report_id}/pdf`.
 
 **Protected (GET, token required):** `/admin/validate` — returns
 `{"status": "ok"}` for a valid `X-Admin-Token`, 401 otherwise; the
@@ -75,7 +77,8 @@ performing any mutation.
 
 **Protected (POST, token required):** `/review-queue/{id}/approve`,
 `/review-queue/{id}/edit`, `/review-queue/{id}/reject`, `/claims/promote`,
-`/briefs/generate`, `/extraction-ready/{accession_number}/extract`.
+`/briefs/generate`, `/extraction-ready/{accession_number}/extract`,
+`/reports/generate`.
 
 In the dashboard, paste the token into the **Admin Access** panel at the
 bottom of the sidebar. It is kept in browser session storage only — never
@@ -150,6 +153,70 @@ empty-period rows are excluded) and upserts the five `valuation_snapshots`,
 preserving source references, extraction methods, formulas, and manual-review
 flags. Reruns insert nothing.
 
+### Evidence Explorer & research reports (Bundle B1)
+
+A trusted-evidence layer plus a deterministic, versioned research-report engine.
+No AI is called (no Gemini, no Claude API); reports are assembled arithmetically
+from three trusted sources only: promoted human-reviewed claims, deterministic
+`financial_metrics`, and dated `valuation_snapshots`.
+
+**Evidence Explorer (public reads):**
+
+- `GET /evidence` — trusted, promoted, grounded claims with provenance
+  (accession, filing date, SEC URL recovered via the source chunk). Optional
+  filters: `ticker`, `accession_number`, `theme`, `claim_type`, `confidence`,
+  `document_key`, `limit` (1–200). Pending proposed claims, rejected drafts,
+  and ungrounded legacy rows are never exposed.
+- `GET /evidence/{claim_id}` — one trusted claim with the **exact source chunk
+  text**, document metadata, filing metadata, and SEC URL. `claim_id` is the
+  `proposed_claim_id` (the stable key for `qualitative_claims`). 404 when missing.
+
+**Research reports (deterministic, versioned):**
+
+- `GET /reports` — stored report metadata (filters: `ticker`, `report_type`,
+  `report_status`).
+- `GET /reports/latest/{ticker}` — latest stored report (optional
+  `report_type`, default `earnings_update`) with content + evidence links;
+  404 when none.
+- `GET /reports/{report_id}` — full report: markdown, HTML, evidence links,
+  PDF Storage path.
+- `GET /reports/{report_id}/pdf` — 307 redirect to a short-lived **signed**
+  private-Storage URL (the bucket is never exposed directly).
+- `POST /reports/generate` *(admin)* — body `{"ticker", "accession_number"?,
+  "report_type"?}`; generates, renders, versions, and persists a report.
+
+**Report structure** (deterministic): Executive Summary · Reported Financial
+Snapshot · Historical Operating Trends · Peer Comparison · Balance Sheet and
+Cash Flow · Valuation Snapshot · Reviewed Evidence-Linked Takeaways · Catalysts
+· Risks and Watch Items · Source Appendix · Methodology and Limitations.
+Catalysts/Risks are routed deterministically from human-reviewed claim text —
+nothing is invented. The report **never** produces forecasts, DCF values,
+price targets, or ratings, and always labels valuation as a dated snapshot.
+
+**Versioning & Storage.** Each generation assigns the next `version_number` and
+writes three artifacts to the private bucket without overwriting prior versions:
+
+```text
+reports/{ticker}/{report_type}/v{version}.md
+reports/{ticker}/{report_type}/v{version}.html
+reports/{ticker}/{report_type}/v{version}.pdf
+```
+
+A `research_reports` row stores the markdown/HTML inline plus the PDF path; one
+`report_evidence_links` row is written per trusted claim used; and a
+`report_generation_runs` row brackets each run (running → completed/failed).
+
+**PDF export choice: `fpdf2`** (pure-Python, no system dependencies). It builds
+reliably on Render, where cairo/pango-based engines (WeasyPrint, xhtml2pdf)
+fail to install. Trade-off: fpdf2's core font is latin-1, so non-latin-1
+punctuation in SEC excerpts is transliterated for the PDF only — the stored
+Markdown and HTML keep full Unicode fidelity.
+
+```bash
+python generate_research_report.py AVGO              # generate + store
+python generate_research_report.py AVGO --dry-run    # print markdown, no writes
+```
+
 ### Manual claim extraction (admin-triggered)
 
 `POST /extraction-ready/{accession_number}/extract` (optional body
@@ -202,6 +269,7 @@ python run_monitor.py            # check EDGAR for new filings
 python run_exhibit_processor.py  # ingest earnings-release exhibits (max 3)
 python run_static_dashboard_backfill.py  # restore audited metrics + valuations
                                  # (dry run; writes need --confirm)
+python generate_research_report.py AVGO  # deterministic report (--dry-run to preview)
 python list_filings.py           # list stored filings
 python review_claims.py          # interactive claim review
 python promote_claims.py         # promote reviewed claims
@@ -228,6 +296,9 @@ only to the FastAPI service — never directly to Supabase.
 | `/` | Cross-company overview: totals, market leaders, peer-fundamentals table, per-company status, latest filings |
 | `/peers` | Peer-comparison terminal: ranked bar chart, full fundamentals + valuation table, comparability notes (charts via `recharts`) |
 | `/companies/[ticker]` | Company deep dive: KPI cards, revenue/margin/FCF/R&D/TTM trend charts, balance-sheet & valuation snapshot, plus pipeline summary, extraction-ready filings, latest brief |
+| `/evidence` | Evidence Explorer: filterable trusted claims with expandable exact source-chunk text and SEC links |
+| `/reports` | Research-report index: ticker/type filters, status/version, claim & metric counts, PDF links |
+| `/reports/latest/[ticker]` | Latest report: ticker tabs, rendered report, version selector, PDF download, evidence links, admin-only generate |
 | `/filings` | Filing feed with ticker/status/limit filters |
 | `/filings/[accessionNumber]` | Filing detail, documents, chunk count |
 | `/extraction-ready` | Exhibit queue with a lifecycle trail (not_started › pending_review › approved), Extract Claims, terminal Promote reviewed claims, first-brief generation, and View latest brief links |
@@ -282,6 +353,11 @@ covered offline by `test_static_dashboard_backfill.py`.
   + valuation backfill, `/metrics`, `/peers`, `/peers/trends`,
   `/valuation-snapshots`, the `/peers` page, charted company deep dives, and a
   fundamentals-driven overview.
-- **Bundle B — Evidence Explorer & report engine (next):** a trusted-evidence
-  explorer, draft-vs-reviewed report records with versioning, a professional
-  earnings-update report template, and PDF export.
+- **Bundle B1 — Evidence Explorer & report engine (complete):** a trusted-
+  evidence explorer, a deterministic professional earnings-update report engine
+  with versioning, Storage persistence (Markdown/HTML/PDF), and report viewing
+  pages. Limitations: no live valuation feed, no forecasts, no DCF, no target
+  price, no rating, and no automatic Claude/Gemini usage.
+- **Bundle B2 — Claude equity-research skill (next):** an optional, human-
+  reviewed Claude-assisted narrative layer on top of the deterministic report
+  (off by default; never writes to trusted tables).

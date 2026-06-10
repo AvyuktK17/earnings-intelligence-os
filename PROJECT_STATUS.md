@@ -25,7 +25,7 @@ Build an Earnings Intelligence OS for semiconductor companies:
 
 ## Supabase tables
 
-Ten tables are in use:
+Thirteen tables are in use (the last three added in Bundle B1):
 
 * `companies` — ticker → company_name watchlist
 * `financial_metrics` — audited quarterly fundamentals, all five tickers
@@ -51,6 +51,17 @@ Ten tables are in use:
 * `qualitative_claims` — trusted human-reviewed claims; promoted rows carry `proposed_claim_id`, `source_chunk_id`, `document_key`, `promoted_at` (note: this table has **no `id` column** — promoted rows are keyed by `proposed_claim_id`)
 * `earnings_briefs` — versioned brief rows; unique versions per accession; stores `markdown_content`, `storage_path`, claim counts, `generated_at`
 * `pipeline_runs` — run bookkeeping
+* `research_reports` — versioned deterministic research reports; stores
+  `report_type`, `report_status` (`human_reviewed_deterministic`),
+  `version_number`, `title`, `markdown_content`, `html_content`,
+  `pdf_storage_path`, `source_claim_count`, `source_metric_count`,
+  `valuation_snapshot_date`, `generator_type` (`deterministic`), `generated_at`
+* `report_evidence_links` — one row per trusted claim used in a report
+  (`research_report_id`, `qualitative_claim_id`, `source_chunk_id`,
+  `accession_number`, `document_key`, `section_name`, `supporting_excerpt`)
+* `report_generation_runs` — audit row per generation
+  (`run_status` running → completed/failed, `report_id`, `error_message`,
+  `started_at`, `completed_at`)
 
 ## Supabase Storage (private bucket: `filing-documents`)
 
@@ -59,6 +70,8 @@ Ten tables are in use:
 * `html/{ticker}/{accession}/exhibits/{filename}` — raw exhibit HTML
 * `parsed/{ticker}/{accession}/exhibits/{filename}.txt` — parsed exhibit text
 * `briefs/{ticker}/{accession}/v{n}.md` — versioned earnings briefs
+* `reports/{ticker}/{report_type}/v{n}.md` / `.html` / `.pdf` — versioned
+  deterministic research reports (lowercase ticker; prior versions preserved)
 
 ## GitHub Actions (`.github/workflows/run-monitor.yml`)
 
@@ -416,6 +429,84 @@ API.
 Valuation figures are always presented as a dated, manually reviewed
 point-in-time snapshot — never implied to be live. Next milestone: **Bundle B
 — Evidence Explorer and professional report engine.**
+
+## Evidence Explorer & deterministic report engine (Bundle B1, complete)
+
+A trusted-evidence layer and a deterministic, versioned research-report engine.
+No AI is called — not Gemini, not the Claude API. Reports are assembled
+arithmetically from three trusted sources only: promoted human-reviewed claims
+(`qualitative_claims`, grounded), deterministic `financial_metrics`, and dated
+`valuation_snapshots`.
+
+### Evidence Explorer (public reads)
+
+* `GET /evidence` — trusted, promoted, grounded claims (`proposed_claim_id` and
+  `source_chunk_id` both non-null). Optional filters `ticker`,
+  `accession_number`, `theme`, `claim_type`, `confidence`, `document_key`,
+  `limit` (1–200). Provenance (accession, filing date, SEC URL) is recovered
+  via `source_chunk_id → filing_chunks → filings`. Pending, rejected, and
+  ungrounded legacy rows are never exposed
+* `GET /evidence/{claim_id}` — one trusted claim with the **exact source chunk
+  text**, document metadata, filing metadata, and SEC URL; `claim_id` is the
+  `proposed_claim_id`. 404 when missing
+
+### Deterministic report engine
+
+`src/research_report.py` builds an intermediate block model and renders it to
+both Markdown and an HTML subset (so the two never drift). Sections, in order:
+Executive Summary · Reported Financial Snapshot · Historical Operating Trends ·
+Peer Comparison · Balance Sheet and Cash Flow · Valuation Snapshot · Reviewed
+Evidence-Linked Takeaways · Catalysts · Risks and Watch Items · Source Appendix
+· Methodology and Limitations. Catalysts/Risks are routed deterministically
+from human-reviewed claim text by keyword — nothing is invented; every claim
+also appears in Takeaways. The engine **never** produces forecasts, DCF values,
+price targets, or ratings, and always labels valuation as a dated snapshot.
+
+`src/research_report_storage.py` versions and persists each report: it brackets
+the run with a `report_generation_runs` row (running → completed/failed),
+assigns the next `version_number`, renders Markdown + HTML + PDF, uploads all
+three to the private bucket under `reports/{ticker}/{report_type}/v{n}.*`
+(prior versions preserved), inserts the `research_reports` row plus one
+`report_evidence_links` row per trusted claim used. CLI:
+`generate_research_report.py` (`--dry-run` prints markdown without writing).
+
+**PDF export: `fpdf2`** (pure-Python, zero system dependencies) — chosen over
+WeasyPrint / xhtml2pdf, which pull in cairo/pango and fail to install on
+Render. Trade-off: fpdf2's core font is latin-1, so SEC-excerpt punctuation is
+transliterated for the PDF only; the stored Markdown and HTML keep full Unicode.
+
+### Report API endpoints
+
+* `GET /reports` (filters `ticker`, `report_type`, `report_status`) — metadata
+  only, newest first, with a `pdf_available` flag
+* `GET /reports/latest/{ticker}` (optional `report_type`, default
+  `earnings_update`) — latest report with content + evidence links; 404 if none
+* `GET /reports/{report_id}` — full report (markdown, HTML, evidence links,
+  PDF path)
+* `GET /reports/{report_id}/pdf` — 307 redirect to a short-lived **signed**
+  private-Storage URL (the bucket is never exposed directly)
+* `POST /reports/generate` *(admin)* — `{"ticker", "accession_number"?,
+  "report_type"?}`; generates, versions, and persists. Errors map to 404
+  (unknown company/filing) or a safe 500 (no secrets or provider detail)
+
+### Frontend (Bundle B1)
+
+* `/evidence` — Evidence Explorer: ticker/type/confidence filters + client-side
+  text search; cards with classification/reviewed badges, excerpt preview, and
+  an expandable exact source-chunk view plus SEC links
+* `/reports` — report index: ticker/type filters, status/version, claim &
+  metric counts, PDF links
+* `/reports/latest/[ticker]` — ticker tabs (from `/companies`), rendered report,
+  version selector, **Download PDF** (via the signed-URL route), evidence-link
+  table, and an admin-only **Generate new report version** button
+* sidebar nav gains **Evidence Explorer** and **Reports** links
+
+### Limitations (Bundle B1)
+
+No live valuation feed (dated snapshots only); no forecasts; no DCF; no target
+price; no rating; no automatic Claude/Gemini usage. Next milestone: **Bundle B2
+— custom Claude equity-research skill and optional human-reviewed narrative
+assist** (off by default; never writes to trusted tables).
 
 ## Deployment (complete — MVP live)
 
