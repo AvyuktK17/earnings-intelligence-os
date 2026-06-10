@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 
 const LINKS = [
   { href: "/", label: "Overview" },
+  { href: "/peers", label: "Peer Comparison" },
   { href: "/filings", label: "Filings" },
   { href: "/extraction-ready", label: "Extraction Ready" },
   { href: "/review-queue", label: "Review Queue" },

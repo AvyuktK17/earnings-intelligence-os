@@ -65,7 +65,8 @@ no user accounts yet.
 
 **Public (GET, no token):** `/health`, `/companies`, `/companies/{ticker}`,
 `/overview`, `/filings`, `/filings/{accession_number}`,
-`/briefs/latest/{ticker}`, `/review-queue`, `/extraction-ready`.
+`/briefs/latest/{ticker}`, `/review-queue`, `/extraction-ready`,
+`/metrics/{ticker}`, `/peers`, `/peers/trends`, `/valuation-snapshots`.
 
 **Protected (GET, token required):** `/admin/validate` — returns
 `{"status": "ok"}` for a valid `X-Admin-Token`, 401 otherwise; the
@@ -101,6 +102,53 @@ plus a per-company status row for the dashboard's Overview page.
 been ingested and chunked — the queue for the manual AI claim-extraction
 step — including each filing's claim-extraction state, pending and trusted
 claim counts, and latest brief version.
+
+### Quantitative research terminal (Bundle A)
+
+A set of deterministic, AI-free read endpoints power the peer-comparison and
+company-financials views. All figures are computed arithmetically from stored
+values; unavailable inputs are returned as `null`, never fabricated.
+
+- `GET /metrics/{ticker}` — historical quarterly operating metrics for one
+  company (revenue, margins, EPS, R&D intensity, TTM series, …), with an
+  optional `metric_name` filter and a latest-period summary. Valuation-derived
+  rows are excluded. 404 for an unknown ticker.
+- `GET /peers` — latest-period peer-comparison table across all five
+  companies: operating fundamentals plus a valuation snapshot and
+  deterministically computed multiples (EV/TTM revenue, EV/TTM operating
+  income, price/TTM FCF, FCF yield), with comparability notes and snapshot
+  dates.
+- `GET /peers/trends?metric_name=&ticker=&limit=` — chart-ready time series
+  for one metric across companies (optionally one ticker / last *N* periods).
+- `GET /valuation-snapshots` — the manually reviewed point-in-time valuation
+  snapshots for all five companies. Every row carries `is_live = false`.
+
+**Valuation data is a manually reviewed point-in-time snapshot, not a live
+market feed.** The snapshots are dated (`share_price_date`) and audited; there
+is no external market-data provider wired in. Operating fundamentals were
+restored from the original public semiconductor research dashboard's audited
+dataset (see below) and never overwrite existing reviewed rows.
+
+#### Audited static-data backfill
+
+`run_static_dashboard_backfill.py` (module: `src/static_dashboard_backfill.py`)
+restores audited fundamentals and valuation snapshots from a locally
+downloaded copy of the original static dashboard. It is idempotent and writes
+nothing without `--confirm`:
+
+```bash
+# download the public dashboard to a temp path (never committed)
+curl -sL https://avyuktk17.github.io/semiconductor-research/ \
+    -o /tmp/semiconductor_dashboard.html
+python run_static_dashboard_backfill.py            # dry run (safe)
+python run_static_dashboard_backfill.py --confirm  # insert missing rows
+```
+
+It inserts only missing AVGO `financial_metrics` operating rows (scoped to
+metric names already present for the other tickers — valuation-derived and
+empty-period rows are excluded) and upserts the five `valuation_snapshots`,
+preserving source references, extraction methods, formulas, and manual-review
+flags. Reruns insert nothing.
 
 ### Manual claim extraction (admin-triggered)
 
@@ -152,6 +200,8 @@ call AI.
 ```bash
 python run_monitor.py            # check EDGAR for new filings
 python run_exhibit_processor.py  # ingest earnings-release exhibits (max 3)
+python run_static_dashboard_backfill.py  # restore audited metrics + valuations
+                                 # (dry run; writes need --confirm)
 python list_filings.py           # list stored filings
 python review_claims.py          # interactive claim review
 python promote_claims.py         # promote reviewed claims
@@ -175,8 +225,9 @@ only to the FastAPI service — never directly to Supabase.
 
 | Route | Purpose |
 |-------|---------|
-| `/` | Cross-company overview: totals, per-company status table, latest filings |
-| `/companies/[ticker]` | Company research page: pipeline summary, extraction-ready filings, latest brief |
+| `/` | Cross-company overview: totals, market leaders, peer-fundamentals table, per-company status, latest filings |
+| `/peers` | Peer-comparison terminal: ranked bar chart, full fundamentals + valuation table, comparability notes (charts via `recharts`) |
+| `/companies/[ticker]` | Company deep dive: KPI cards, revenue/margin/FCF/R&D/TTM trend charts, balance-sheet & valuation snapshot, plus pipeline summary, extraction-ready filings, latest brief |
 | `/filings` | Filing feed with ticker/status/limit filters |
 | `/filings/[accessionNumber]` | Filing detail, documents, chunk count |
 | `/extraction-ready` | Exhibit queue with a lifecycle trail (not_started › pending_review › approved), Extract Claims, terminal Promote reviewed claims, first-brief generation, and View latest brief links |
@@ -220,4 +271,17 @@ cd frontend && npm run lint && npm run build
 
 API tests run against live Supabase data; mutation tests use temporary rows
 and clean up after themselves, supplying a temporary admin token through the
-environment (never printed).
+environment (never printed). The quantitative endpoints are covered by
+`test_api_metrics.py`, `test_api_peers.py`, and
+`test_api_valuation_snapshots.py`; the backfill parser/idempotency logic is
+covered offline by `test_static_dashboard_backfill.py`.
+
+## Roadmap
+
+- **Bundle A — Quantitative research terminal (complete):** audited metrics
+  + valuation backfill, `/metrics`, `/peers`, `/peers/trends`,
+  `/valuation-snapshots`, the `/peers` page, charted company deep dives, and a
+  fundamentals-driven overview.
+- **Bundle B — Evidence Explorer & report engine (next):** a trusted-evidence
+  explorer, draft-vs-reviewed report records with versioning, a professional
+  earnings-update report template, and PDF export.

@@ -234,6 +234,108 @@ export interface BriefGenerationResult {
   interpretive_claim_count: number;
 }
 
+// --- Quantitative research terminal (Bundle A) ---------------------------
+
+export interface MetricPoint {
+  fiscal_year: number;
+  fiscal_quarter: string;
+  period: string;
+  value: number | null;
+  unit?: string | null;
+}
+
+export interface MetricsResponse {
+  ticker: string;
+  metric_name: string | null;
+  metric_count: number;
+  period_count: number;
+  periods: string[];
+  metrics: Record<string, MetricPoint[]>;
+  latest_period: string | null;
+  latest_period_summary: Record<string, number | null>;
+}
+
+export interface PeerRow {
+  ticker: string;
+  company_name: string;
+  business_model: string | null;
+  revenue: number | null;
+  yoy_revenue_growth: number | null;
+  gross_margin: number | null;
+  operating_margin: number | null;
+  free_cash_flow_margin: number | null;
+  rd_as_pct_of_revenue: number | null;
+  ttm_revenue: number | null;
+  ttm_operating_income: number | null;
+  ttm_free_cash_flow: number | null;
+  cash: number | null;
+  total_debt: number | null;
+  net_cash_debt: number | null;
+  valuation_snapshot_date: string | null;
+  share_price: number | null;
+  market_cap: number | null;
+  enterprise_value: number | null;
+  debt_measure: string | null;
+  valuation_notes: string | null;
+  ev_to_ttm_revenue: number | null;
+  ev_to_ttm_operating_income: number | null;
+  price_to_ttm_fcf: number | null;
+  free_cash_flow_yield: number | null;
+}
+
+export interface ComparabilityNote {
+  ticker: string;
+  business_model: string | null;
+  debt_measure: string | null;
+  notes: string | null;
+}
+
+export interface PeersResponse {
+  count: number;
+  peers: PeerRow[];
+  valuation_is_live: boolean;
+  valuation_snapshot_dates: string[];
+  valuation_disclaimer: string;
+  comparability_notes: ComparabilityNote[];
+}
+
+export interface TrendSeries {
+  ticker: string;
+  company_name: string;
+  points: { fiscal_year: number; fiscal_quarter: string; period: string; value: number | null }[];
+}
+
+export interface PeerTrendsResponse {
+  metric_name: string;
+  series: TrendSeries[];
+}
+
+export interface ValuationSnapshot {
+  id: number;
+  ticker: string;
+  share_price_date: string;
+  share_price: number | null;
+  shares_outstanding: number | null;
+  shares_outstanding_source_date: string | null;
+  market_cap: number | null;
+  cash: number | null;
+  total_debt: number | null;
+  enterprise_value: number | null;
+  debt_measure: string | null;
+  source: string | null;
+  manually_reviewed: string | null;
+  notes: string | null;
+  is_live: boolean;
+}
+
+export interface ValuationSnapshotsResponse {
+  count: number;
+  snapshots: ValuationSnapshot[];
+  is_live: boolean;
+  valuation_snapshot_dates: string[];
+  valuation_disclaimer: string;
+}
+
 export class ApiError extends Error {
   status: number;
 
@@ -384,5 +486,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ticker, accession_number: accessionNumber }),
     });
+  },
+
+  // --- Quantitative research terminal (public reads) --------------------
+
+  getMetrics(ticker: string, metricName?: string) {
+    const qs = metricName
+      ? `?metric_name=${encodeURIComponent(metricName)}`
+      : "";
+    return request<MetricsResponse>(
+      `/metrics/${encodeURIComponent(ticker)}${qs}`,
+    );
+  },
+
+  getPeers() {
+    return request<PeersResponse>("/peers");
+  },
+
+  getPeerTrends(metricName: string, params?: { ticker?: string; limit?: number }) {
+    const search = new URLSearchParams({ metric_name: metricName });
+    if (params?.ticker) search.set("ticker", params.ticker);
+    if (params?.limit) search.set("limit", String(params.limit));
+    return request<PeerTrendsResponse>(`/peers/trends?${search.toString()}`);
+  },
+
+  getValuationSnapshots() {
+    return request<ValuationSnapshotsResponse>("/valuation-snapshots");
   },
 };

@@ -1,18 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   api,
   type FilingsResponse,
   type OverviewResponse,
+  type PeerRow,
+  type PeersResponse,
 } from "@/lib/api";
 import FilingsTable from "@/components/FilingsTable";
 import { ErrorBox, Loading, Panel, StatCard } from "@/components/Panel";
+import { ValuationBadge } from "@/components/ValuationNote";
+import { formatMultiple, formatPercent, formatUSD } from "@/lib/format";
+
+function leader(
+  peers: PeerRow[],
+  key: keyof PeerRow,
+): PeerRow | null {
+  const ranked = peers
+    .filter((p) => p[key] != null)
+    .sort((a, b) => (b[key] as number) - (a[key] as number));
+  return ranked[0] ?? null;
+}
 
 export default function OverviewPage() {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [filings, setFilings] = useState<FilingsResponse | null>(null);
+  const [peers, setPeers] = useState<PeersResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -33,6 +48,13 @@ export default function OverviewPage() {
           setError(err instanceof Error ? err.message : "Failed to load data.");
         }
       }
+      // Peer fundamentals are additive; never block the pipeline overview.
+      try {
+        const peersData = await api.getPeers();
+        if (!cancelled) setPeers(peersData);
+      } catch {
+        /* leave the peer panels out if the endpoint is unavailable */
+      }
       if (!cancelled) setLoading(false);
     }
 
@@ -41,6 +63,19 @@ export default function OverviewPage() {
       cancelled = true;
     };
   }, []);
+
+  const topGrowth = useMemo(
+    () => (peers ? leader(peers.peers, "yoy_revenue_growth") : null),
+    [peers],
+  );
+  const topGross = useMemo(
+    () => (peers ? leader(peers.peers, "gross_margin") : null),
+    [peers],
+  );
+  const topFcf = useMemo(
+    () => (peers ? leader(peers.peers, "free_cash_flow_margin") : null),
+    [peers],
+  );
 
   return (
     <div className="space-y-5">
@@ -88,6 +123,96 @@ export default function OverviewPage() {
               hint="versioned, evidence-linked"
             />
           </div>
+
+          {peers && (
+            <>
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+                <StatCard
+                  label="Top revenue growth"
+                  value={topGrowth ? topGrowth.ticker : "—"}
+                  hint={
+                    topGrowth
+                      ? `${formatPercent(topGrowth.yoy_revenue_growth)} YoY`
+                      : undefined
+                  }
+                />
+                <StatCard
+                  label="Highest gross margin"
+                  value={topGross ? topGross.ticker : "—"}
+                  hint={
+                    topGross
+                      ? `${formatPercent(topGross.gross_margin)} gross`
+                      : undefined
+                  }
+                />
+                <StatCard
+                  label="Strongest FCF margin"
+                  value={topFcf ? topFcf.ticker : "—"}
+                  hint={
+                    topFcf
+                      ? `${formatPercent(topFcf.free_cash_flow_margin)} FCF margin`
+                      : undefined
+                  }
+                />
+              </div>
+
+              <Panel
+                title="Peer fundamentals"
+                actions={
+                  <div className="flex items-center gap-3">
+                    <ValuationBadge
+                      date={peers.valuation_snapshot_dates?.[0] ?? null}
+                    />
+                    <Link
+                      href="/peers"
+                      className="text-[12px] text-info hover:text-accent hover:underline"
+                    >
+                      Full peer comparison →
+                    </Link>
+                  </div>
+                }
+              >
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[680px] text-left text-[13px]">
+                    <thead>
+                      <tr className="border-b border-edge text-[11px] uppercase tracking-wider text-muted">
+                        <th className="py-1.5 pr-3 font-medium">Ticker</th>
+                        <th className="py-1.5 pr-3 font-medium text-right">Revenue</th>
+                        <th className="py-1.5 pr-3 font-medium text-right">YoY</th>
+                        <th className="py-1.5 pr-3 font-medium text-right">Gross</th>
+                        <th className="py-1.5 pr-3 font-medium text-right">Op.</th>
+                        <th className="py-1.5 pr-3 font-medium text-right">EV/Rev</th>
+                        <th className="py-1.5 font-medium text-right">FCF yld</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {peers.peers.map((row) => (
+                        <tr
+                          key={row.ticker}
+                          className="border-b border-edge/50 last:border-b-0 hover:bg-surface-raised"
+                        >
+                          <td className="py-1.5 pr-3 font-mono font-medium">
+                            <Link
+                              href={`/companies/${encodeURIComponent(row.ticker)}`}
+                              className="text-accent hover:underline"
+                            >
+                              {row.ticker}
+                            </Link>
+                          </td>
+                          <td className="py-1.5 pr-3 text-right font-mono">{formatUSD(row.revenue)}</td>
+                          <td className="py-1.5 pr-3 text-right font-mono">{formatPercent(row.yoy_revenue_growth)}</td>
+                          <td className="py-1.5 pr-3 text-right font-mono">{formatPercent(row.gross_margin)}</td>
+                          <td className="py-1.5 pr-3 text-right font-mono">{formatPercent(row.operating_margin)}</td>
+                          <td className="py-1.5 pr-3 text-right font-mono text-accent">{formatMultiple(row.ev_to_ttm_revenue)}</td>
+                          <td className="py-1.5 text-right font-mono">{formatPercent(row.free_cash_flow_yield)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            </>
+          )}
 
           <Panel title="Company status">
             <table className="w-full text-left text-[13px]">

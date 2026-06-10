@@ -25,8 +25,25 @@ Build an Earnings Intelligence OS for semiconductor companies:
 
 ## Supabase tables
 
+Ten tables are in use:
+
 * `companies` — ticker → company_name watchlist
-* `financial_metrics`
+* `financial_metrics` — audited quarterly fundamentals, all five tickers
+  (AMD, AVGO, INTC, NVDA, QCOM) × 258 rows = 1,290 rows; columns `company,
+  ticker, fiscal_year, fiscal_quarter, metric_name, value, unit,
+  extraction_method, source_reference, derived_from, requires_manual_review,
+  formula`. 252 quarterly operating rows per ticker (21 metrics × 12
+  quarters, FY2023–FY2026) plus 6 embedded valuation-derived rows
+  (empty-period) that the quantitative API filters out — valuation lives in
+  `valuation_snapshots`. The audited dataset (including AVGO) was restored
+  from the original public static dashboard; see "Audited static-data
+  backfill" below
+* `valuation_snapshots` — manually reviewed point-in-time valuation
+  snapshots for all five tickers (`ticker, share_price_date, share_price,
+  shares_outstanding, shares_outstanding_source_date, market_cap, cash,
+  total_debt, enterprise_value, debt_measure, source, manually_reviewed,
+  notes`; unique on `(ticker, share_price_date)`). Dated/audited, **not** a
+  live market feed; the API surfaces every row with `is_live = false`
 * `filings` — one row per detected filing; lifecycle status, Storage paths, timestamps, processing_error; exhibit columns: `exhibit_processing_status` (`not_checked` / `processed` / `not_found` / `failed`, default `not_checked`), `exhibit_checked_at`, `exhibit_processing_error`, `earnings_release_document_id` → `filing_documents(id)`; extraction columns: `claim_extraction_status` (`not_started` / `pending_review` / `approved` / `failed`, default `not_started`), `claim_extracted_at`, `claim_extraction_error`
 * `filing_documents` — exhibit documents (e.g. EX-99.1) per filing; unique on `(accession_number, filename)`
 * `filing_chunks` — AI-ready chunks; unique on `(accession_number, document_key, chunk_index)`; primary chunks use `document_key = "primary"`, exhibit chunks use `document_key = "exhibit:{filename}"`
@@ -324,6 +341,81 @@ Routes:
   cards + rendered markdown; tickers without a stored brief render a clean
   empty state; "Generate new brief version" button refreshes to the new
   version
+
+## Quantitative research terminal (Bundle A, complete)
+
+Restores the quantitative depth of the original static dashboard as a live,
+deterministic layer over Supabase. No AI, no external market-data provider.
+
+### Audited static-data backfill
+
+`src/static_dashboard_backfill.py` + `run_static_dashboard_backfill.py` +
+`test_static_dashboard_backfill.py`:
+
+* parses the `METRICS` (1,290 rows) and `VALUATIONS` (5 rows) JS arrays from a
+  locally downloaded copy of the public static dashboard
+  (`https://avyuktk17.github.io/semiconductor-research/`); the HTML is read
+  from a temp path (`/tmp/semiconductor_dashboard.html`) and never committed
+* idempotent, dry-run-by-default, writes only with `--confirm`
+* AVGO `financial_metrics`: inserts only missing operating rows, scoped to the
+  metric names already present for the other tickers (valuation-derived and
+  empty-period rows excluded); existing reviewed rows for the other four
+  tickers are never overwritten. **In practice AVGO's 252 operating rows were
+  already present** (the live table already held the full audited dataset; an
+  earlier "AVGO missing" reading was a PostgREST 1000-row pagination
+  artifact), so the metrics step is a verified no-op
+* `valuation_snapshots`: the 5 manually reviewed snapshots were inserted on
+  the confirmed run; a rerun skips all 5 (idempotent). Source references,
+  extraction methods, formulas, and manual-review flags are preserved
+* never calls Gemini; no credentials printed
+
+### Quantitative read endpoints (public, deterministic)
+
+* `GET /metrics/{ticker}` — historical operating-metric series for one
+  company (optional `metric_name` filter); returns metric/period counts,
+  per-metric time series, and a latest-period summary. Valuation-derived rows
+  excluded; ticker uppercased; 404 unknown ticker
+* `GET /peers` — latest-period peer table for all five companies: operating
+  fundamentals + valuation snapshot fields + deterministically computed
+  multiples (EV/TTM revenue, EV/TTM operating income, price/TTM FCF, FCF
+  yield). Honest `null` where inputs are missing; carries
+  `valuation_is_live = false`, snapshot dates, a disclaimer, and per-ticker
+  comparability notes (business model + debt measure)
+* `GET /peers/trends?metric_name=&ticker=&limit=` — chart-ready per-ticker
+  time series for one metric (optional single ticker / last N periods)
+* `GET /valuation-snapshots` — the 5 manually reviewed snapshots, each tagged
+  `is_live = false`, with snapshot dates and a disclaimer
+
+Deterministic math lives in `src/quantitative.py` (period sorting, operating
+filtering, series building, latest-period summary, multiple computation);
+`compute_multiples` returns `None` for any missing or zero denominator. Tests:
+`test_api_metrics.py`, `test_api_peers.py`, `test_api_valuation_snapshots.py`.
+
+### Frontend quantitative pages
+
+`recharts` is the only new dependency. The browser still talks only to the
+API.
+
+* `/peers` — peer-comparison terminal: ranked horizontal bar chart with a
+  metric selector, full fundamentals + valuation table, comparability-note
+  panel, a visible "Valuation snapshot as of 2026-06-04" badge, and the
+  "not a live market feed" disclaimer
+* `/companies/[ticker]` — extended deep dive: financial KPI cards (latest
+  quarter + YoY), revenue / gross+operating margin / FCF-margin / R&D-intensity
+  / TTM trend charts, a balance-sheet & cash-flow snapshot, and a valuation
+  snapshot (badge + disclaimer), above the existing pipeline panels;
+  degrades cleanly when fundamentals are unavailable
+* `/` — overview now also shows market-leader cards (top revenue growth,
+  highest gross margin, strongest FCF margin), a peer-fundamentals table, and
+  a link to `/peers`
+* shared helpers: `src/lib/format.ts` (null-safe USD/percent/multiple
+  formatting, series merge), `src/components/charts.tsx` (themed recharts
+  line/bar charts), `src/components/ValuationNote.tsx` (snapshot badge +
+  disclaimer); sidebar nav gains a **Peer Comparison** link
+
+Valuation figures are always presented as a dated, manually reviewed
+point-in-time snapshot — never implied to be live. Next milestone: **Bundle B
+— Evidence Explorer and professional report engine.**
 
 ## Deployment (complete — MVP live)
 

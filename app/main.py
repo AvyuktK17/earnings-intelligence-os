@@ -23,6 +23,16 @@ from src.brief_storage import generate_and_store_earnings_brief
 from src.claim_promotion import promote_reviewed_claims
 from src.claim_review import approve_claim, approve_claim_with_edits, reject_claim
 from src.database import get_supabase_client
+from src.quantitative import (
+    PEER_METRIC_FIELDS,
+    build_metric_series,
+    compute_multiples,
+    latest_metric_values,
+    operating_rows,
+    period_label,
+    period_sort_key,
+    sorted_periods,
+)
 from src.ready_filing_extraction import (
     ClaimExtractionError,
     ClaimExtractionQuotaError,
@@ -76,6 +86,25 @@ CLAIM_COLUMNS = (
     "id, ticker, accession_number, document_key, theme, claim_text, "
     "supporting_excerpt, source_chunk_id, source_chunk_index, claim_type, "
     "confidence, review_status, created_at"
+)
+
+# Quarterly operating metrics (excludes the embedded valuation-derived rows,
+# which are filtered out by src.quantitative). Queried per-ticker so the
+# PostgREST 1000-row cap is never reached.
+METRIC_COLUMNS = "ticker, fiscal_year, fiscal_quarter, metric_name, value, unit"
+
+VALUATION_SNAPSHOT_COLUMNS = (
+    "id, ticker, share_price_date, share_price, shares_outstanding, "
+    "shares_outstanding_source_date, market_cap, cash, total_debt, "
+    "enterprise_value, debt_measure, source, manually_reviewed, notes"
+)
+
+# Valuation data is a manually reviewed point-in-time snapshot, never a live
+# market feed. Every valuation payload carries this so the dashboard can label
+# it honestly.
+_VALUATION_DISCLAIMER = (
+    "Valuation data is a manually reviewed point-in-time snapshot, not a live "
+    "market feed."
 )
 
 
@@ -385,6 +414,249 @@ def get_overview() -> dict:
         "trusted_claim_count": _trusted_promoted_count(supabase),
         "stored_brief_count": total_briefs,
         "companies": rows,
+    }
+
+
+def _company_or_404(supabase, ticker: str) -> dict:
+    """Return one company row by ticker (uppercased) or raise 404."""
+    companies = (
+        supabase.table("companies")
+        .select("ticker, company_name, cik, business_model")
+        .eq("ticker", ticker)
+        .execute()
+        .data
+    )
+    if not companies:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No monitored company found for ticker={ticker!r}.",
+        )
+    return companies[0]
+
+
+def _metric_rows(supabase, ticker: str) -> list[dict]:
+    """Operating metric rows for one ticker (valuation rows filtered out)."""
+    rows = (
+        supabase.table("financial_metrics")
+        .select(METRIC_COLUMNS)
+        .eq("ticker", ticker)
+        .execute()
+        .data
+    )
+    return operating_rows(rows)
+
+
+def _valuation_snapshot(supabase, ticker: str) -> dict | None:
+    """Latest manually reviewed valuation snapshot for one ticker, or None."""
+    rows = (
+        supabase.table("valuation_snapshots")
+        .select(VALUATION_SNAPSHOT_COLUMNS)
+        .eq("ticker", ticker)
+        .order("share_price_date", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return rows[0] if rows else None
+
+
+@app.get("/metrics/{ticker}")
+def get_metrics(ticker: str, metric_name: str | None = None) -> dict:
+    """Return the historical operating-metric time series for one company.
+
+    Deterministic, AI-free read of ``financial_metrics``. Valuation-derived
+    rows are excluded (see ``/valuation-snapshots``). Optional ``metric_name``
+    narrows the response to a single metric. 404 for an unknown ticker.
+    """
+    supabase = _supabase()
+    normalized = ticker.upper()
+    _company_or_404(supabase, normalized)
+
+    rows = _metric_rows(supabase, normalized)
+    if metric_name is not None:
+        rows = [row for row in rows if row["metric_name"] == metric_name]
+
+    series = build_metric_series(rows)
+    periods = [p["period"] for p in sorted_periods(rows)]
+    latest_values = latest_metric_values(rows)
+    latest = max(
+        (
+            (row["fiscal_year"], row["fiscal_quarter"])
+            for row in rows
+        ),
+        key=lambda p: period_sort_key(*p),
+        default=None,
+    )
+
+    return {
+        "ticker": normalized,
+        "metric_name": metric_name,
+        "metric_count": len(series),
+        "period_count": len(periods),
+        "periods": periods,
+        "metrics": series,
+        "latest_period": period_label(*latest) if latest else None,
+        "latest_period_summary": latest_values,
+    }
+
+
+def _peer_row(supabase, company: dict) -> dict:
+    """Build one latest-period peer-comparison row with valuation multiples."""
+    ticker = company["ticker"]
+    latest_values = latest_metric_values(_metric_rows(supabase, ticker))
+
+    def metric(name: str):
+        return latest_values.get(name)
+
+    snapshot = _valuation_snapshot(supabase, ticker)
+    market_cap = snapshot.get("market_cap") if snapshot else None
+    enterprise_value = snapshot.get("enterprise_value") if snapshot else None
+
+    multiples = compute_multiples(
+        market_cap=market_cap,
+        enterprise_value=enterprise_value,
+        ttm_revenue=metric("TTM Revenue"),
+        ttm_operating_income=metric("TTM Operating Income"),
+        ttm_free_cash_flow=metric("TTM Free Cash Flow"),
+    )
+
+    row = {
+        "ticker": ticker,
+        "company_name": company["company_name"],
+        "business_model": company["business_model"],
+    }
+    # Operating metrics at the latest reported quarter (honest null when absent).
+    for source_name, field in PEER_METRIC_FIELDS.items():
+        row[field] = metric(source_name)
+    # Valuation snapshot fields (point-in-time, not live).
+    row["valuation_snapshot_date"] = (
+        snapshot.get("share_price_date") if snapshot else None
+    )
+    row["share_price"] = snapshot.get("share_price") if snapshot else None
+    row["market_cap"] = market_cap
+    row["enterprise_value"] = enterprise_value
+    row["debt_measure"] = snapshot.get("debt_measure") if snapshot else None
+    row["valuation_notes"] = snapshot.get("notes") if snapshot else None
+    row.update(multiples)
+    return row
+
+
+@app.get("/peers")
+def get_peers() -> dict:
+    """Latest-period peer-comparison table across all monitored companies.
+
+    Operating metrics come from ``financial_metrics``; valuation fields and
+    multiples come from the manually reviewed ``valuation_snapshots`` and are
+    computed deterministically. Unavailable values are surfaced as ``null``
+    rather than fabricated. Valuation data is a dated snapshot, not live.
+    """
+    supabase = _supabase()
+    companies = (
+        supabase.table("companies")
+        .select("ticker, company_name, cik, business_model")
+        .order("ticker", desc=False)
+        .execute()
+        .data
+    )
+
+    rows = [_peer_row(supabase, company) for company in companies]
+    snapshot_dates = sorted(
+        {row["valuation_snapshot_date"] for row in rows if row["valuation_snapshot_date"]}
+    )
+    comparability_notes = [
+        {
+            "ticker": row["ticker"],
+            "business_model": row["business_model"],
+            "debt_measure": row["debt_measure"],
+            "notes": row["valuation_notes"],
+        }
+        for row in rows
+    ]
+
+    return {
+        "count": len(rows),
+        "peers": rows,
+        "valuation_is_live": False,
+        "valuation_snapshot_dates": snapshot_dates,
+        "valuation_disclaimer": _VALUATION_DISCLAIMER,
+        "comparability_notes": comparability_notes,
+    }
+
+
+@app.get("/peers/trends")
+def get_peer_trends(
+    metric_name: str,
+    ticker: str | None = None,
+    limit: int = Query(default=0, ge=0, le=100),
+) -> dict:
+    """Chart-ready time series for one metric across companies.
+
+    ``metric_name`` is required. Optional ``ticker`` restricts to one company;
+    optional ``limit`` keeps only the most recent N periods per company.
+    """
+    supabase = _supabase()
+    companies = (
+        supabase.table("companies")
+        .select("ticker, company_name")
+        .order("ticker", desc=False)
+        .execute()
+        .data
+    )
+    if ticker is not None:
+        normalized = ticker.upper()
+        companies = [c for c in companies if c["ticker"] == normalized]
+
+    series = []
+    for company in companies:
+        rows = _metric_rows(supabase, company["ticker"])
+        points = [
+            {
+                "fiscal_year": row["fiscal_year"],
+                "fiscal_quarter": row["fiscal_quarter"],
+                "period": period_label(row["fiscal_year"], row["fiscal_quarter"]),
+                "value": row.get("value"),
+            }
+            for row in rows
+            if row["metric_name"] == metric_name
+        ]
+        points.sort(key=lambda p: period_sort_key(p["fiscal_year"], p["fiscal_quarter"]))
+        if limit:
+            points = points[-limit:]
+        series.append(
+            {
+                "ticker": company["ticker"],
+                "company_name": company["company_name"],
+                "points": points,
+            }
+        )
+
+    return {"metric_name": metric_name, "series": series}
+
+
+@app.get("/valuation-snapshots")
+def get_valuation_snapshots() -> dict:
+    """Return the manually reviewed point-in-time valuation snapshots.
+
+    These are dated, audited snapshots — never a live market feed. Every row
+    carries ``is_live = false``.
+    """
+    rows = (
+        _supabase()
+        .table("valuation_snapshots")
+        .select(VALUATION_SNAPSHOT_COLUMNS)
+        .order("ticker", desc=False)
+        .execute()
+        .data
+    )
+    for row in rows:
+        row["is_live"] = False
+    snapshot_dates = sorted({row["share_price_date"] for row in rows if row.get("share_price_date")})
+    return {
+        "count": len(rows),
+        "snapshots": rows,
+        "is_live": False,
+        "valuation_snapshot_dates": snapshot_dates,
+        "valuation_disclaimer": _VALUATION_DISCLAIMER,
     }
 
 
