@@ -106,7 +106,9 @@ Filing-level extraction lifecycle (`claim_extraction_status`):
 - `not_started` — no extraction run yet
 - `pending_review` — drafts stored and awaiting analyst review
 - `approved` — every grounded draft reviewed and promotion completed
-  (set automatically when a promotion run leaves no grounded pending rows)
+  (set automatically when a promotion run leaves no grounded pending rows;
+  once the Review Queue empties for a filing, the terminal promotion is
+  triggered from the Extraction Ready page)
 - `failed` — last run errored; the message is stored in
   `claim_extraction_error`
 
@@ -162,9 +164,9 @@ only to the FastAPI service — never directly to Supabase.
 | `/` | Overview: summary cards + latest filings |
 | `/filings` | Filing feed with ticker/status/limit filters |
 | `/filings/[accessionNumber]` | Filing detail, documents, chunk count |
-| `/extraction-ready` | Exhibit queue with extraction-state badges and an admin-only Extract Claims action |
+| `/extraction-ready` | Exhibit queue with a lifecycle trail (not_started › pending_review › approved), Extract Claims, terminal Promote reviewed claims, and View latest brief links |
 | `/review-queue` | Approve / edit / reject grounded pending claims; scoped promotion |
-| `/briefs/latest/[ticker]` | Latest stored brief with markdown rendering and version generation |
+| `/briefs/latest/[ticker]` | Latest stored brief with company tabs (from `/companies`), markdown rendering, and version generation |
 
 ## Deployment (live)
 

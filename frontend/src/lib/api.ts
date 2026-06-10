@@ -159,6 +159,7 @@ export interface PromotionResult {
   eligible_count: number;
   promoted_count: number;
   skipped_existing_count: number;
+  approved_filings: string[];
   promoted_claims: {
     proposed_claim_id: number;
     ticker: string;

@@ -274,19 +274,30 @@ Routes:
 * `/filings/[accessionNumber]` — full filing metadata, timestamps,
   processing error, document list with Storage flags, chunk count
 * `/extraction-ready` — per-filing cards with exhibit filename, document
-  key, chunk count, exhibit + extraction-state badges, pending/trusted
-  claim counts, and latest brief version; admin-only **Extract Claims**
-  button (requires a saved token, disabled while running) that calls the
-  protected extract endpoint, shows a compact success note with a "Review
-  drafted claims" link to `/review-queue`, a dedicated quota message on
-  429, and the stored extraction error for failed filings; accession
-  numbers link to the filing detail page; clean empty state
+  key, chunk count, an exhibit badge plus a lifecycle trail
+  (`not_started › pending_review › approved`, failed shown as a badge),
+  pending/trusted claim counts, and latest brief version; admin-only
+  **Extract Claims** button (requires a saved token, disabled while
+  running) that calls the protected extract endpoint, shows a compact
+  success note with a "Review drafted claims" link to `/review-queue`, a
+  dedicated quota message on 429, and the redacted extraction error for
+  failed filings; an admin-only **Promote reviewed claims** button appears
+  when the filing is `pending_review` with zero grounded pending drafts —
+  the terminal promotion that flips the filing to `approved` (the Review
+  Queue can no longer trigger it because its per-filing group disappears
+  once the last draft is reviewed); approved filings with a stored brief
+  show a "View latest brief" link; accession numbers link to the filing
+  detail page; clean empty state
 * `/review-queue` — grounded pending claims grouped by filing; approve /
   edit-and-approve / reject with optional reviewer notes; per-filing
   "Promote reviewed claims for this filing" button (scoped promotion only —
   the frontend never calls global promotion); clean empty state
-* `/briefs/latest/[ticker]` — brief metadata cards + rendered markdown;
-  "Generate new brief version" button refreshes to the new version
+* `/briefs/latest/[ticker]` — company ticker tabs loaded from
+  `GET /companies` (static fallback if it fails) navigate between all
+  watched companies with the active ticker highlighted; brief metadata
+  cards + rendered markdown; tickers without a stored brief render a clean
+  empty state; "Generate new brief version" button refreshes to the new
+  version
 
 ## Deployment (complete — MVP live)
 
@@ -322,8 +333,12 @@ API tests: `test_api_health.py`, `test_api_filings.py`, `test_api_briefs.py`,
 (worker processed / not-found / failed paths, idempotency, and proof that
 grounded chunks and trusted claims survive reruns),
 `test_exhibit_selection.py` (synthetic press-release-first ranking, no
-network), `test_claim_extraction_status.py`,
-`test_ready_filing_extraction.py`, and `test_api_manual_extraction.py`
+network), `test_exhibit_repointing.py` (best-ranked upgrade + exact-match
+reuse), `test_api_error_redaction.py` (no provider details in public
+payloads), `test_claim_extraction_status.py`,
+`test_ready_filing_extraction.py`, `test_promotion_lifecycle.py`
+(scoped promotion approves exactly the fully reviewed filing),
+and `test_api_manual_extraction.py`
 (auth, validation, 404/400/429/safe-500 mapping, and the
 promotion-driven `approved` lifecycle). Every extraction test
 monkeypatches the Gemini-backed extractor — automated tests never consume

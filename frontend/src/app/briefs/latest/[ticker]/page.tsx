@@ -1,9 +1,44 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import { api, ApiError, type Brief } from "@/lib/api";
 import { ErrorBox, Loading, Panel, StatCard, SuccessNote } from "@/components/Panel";
+
+// Fallback only if GET /companies fails; the live list comes from the API.
+const FALLBACK_TICKERS = ["AMD", "AVGO", "INTC", "NVDA", "QCOM"];
+
+function CompanyTabs({
+  tickers,
+  active,
+}: {
+  tickers: string[] | null;
+  active: string;
+}) {
+  if (tickers === null) {
+    return (
+      <div className="font-mono text-[11px] text-faint">loading companies…</div>
+    );
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {tickers.map((t) => (
+        <Link
+          key={t}
+          href={`/briefs/latest/${encodeURIComponent(t)}`}
+          className={`rounded border px-2.5 py-1 font-mono text-[12px] transition-colors ${
+            t === active
+              ? "border-accent/60 bg-accent/10 font-semibold text-accent"
+              : "border-edge text-muted hover:border-accent/40 hover:text-foreground"
+          }`}
+        >
+          {t}
+        </Link>
+      ))}
+    </div>
+  );
+}
 
 export default function LatestBriefPage({
   params,
@@ -20,6 +55,26 @@ export default function LatestBriefPage({
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [tickers, setTickers] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCompanies() {
+      try {
+        const result = await api.getCompanies();
+        if (!cancelled) setTickers(result.companies.map((c) => c.ticker));
+      } catch {
+        // Companies endpoint unavailable — fall back to the known watchlist.
+        if (!cancelled) setTickers(FALLBACK_TICKERS);
+      }
+    }
+
+    loadCompanies();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +135,8 @@ export default function LatestBriefPage({
           claims
         </p>
       </header>
+
+      <CompanyTabs tickers={tickers} active={ticker} />
 
       {flash && <SuccessNote message={flash} />}
       {error && <ErrorBox message={error} />}
