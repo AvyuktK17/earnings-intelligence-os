@@ -83,6 +83,12 @@ def _supabase():
 # bad request.
 _NOT_FOUND_PREFIXES = ("No proposed claim found", "No filing found")
 
+# Public stand-in for claim_extraction_error: the raw provider text stays in
+# Supabase for admin debugging but must never leave through a public GET.
+_PUBLIC_EXTRACTION_ERROR = (
+    "Claim extraction failed. Retry later or contact the administrator."
+)
+
 
 def _http_error(exc: ValueError) -> HTTPException:
     """Map a ValueError from the workflow modules to a 404 or 400 response."""
@@ -353,7 +359,11 @@ def list_extraction_ready() -> dict:
                 "ready_for_extraction": chunk_count > 0,
                 "claim_extraction_status": filing["claim_extraction_status"],
                 "claim_extracted_at": filing["claim_extracted_at"],
-                "claim_extraction_error": filing["claim_extraction_error"],
+                "claim_extraction_error": (
+                    _PUBLIC_EXTRACTION_ERROR
+                    if filing["claim_extraction_error"]
+                    else None
+                ),
                 "pending_grounded_claim_count": pending_grounded,
                 "trusted_promoted_claim_count": trusted_promoted,
                 "latest_brief_version": (

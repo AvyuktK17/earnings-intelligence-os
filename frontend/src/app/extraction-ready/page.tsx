@@ -77,12 +77,11 @@ function FilingCard({
         </span>
       </div>
 
+      {/* The API redacts provider errors to a safe generic sentence. */}
       {filing.claim_extraction_status === "failed" &&
         filing.claim_extraction_error && (
           <div className="mt-3">
-            <ErrorBox
-              message={`Last extraction failed: ${filing.claim_extraction_error}`}
-            />
+            <ErrorBox message={filing.claim_extraction_error} />
           </div>
         )}
 

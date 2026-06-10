@@ -199,7 +199,10 @@ Read endpoints (public):
   earnings-release exhibit, newest first; each row carries the exhibit
   filename, `document_key`, `chunk_count`, `ready_for_extraction`, plus
   the extraction lifecycle (`claim_extraction_status`,
-  `claim_extracted_at`, `claim_extraction_error`),
+  `claim_extracted_at`, `claim_extraction_error` — publicly redacted to
+  the generic "Claim extraction failed. Retry later or contact the
+  administrator." while the raw provider text stays only in Supabase and
+  backend logs),
   `pending_grounded_claim_count`, `trusted_promoted_claim_count`, and
   `latest_brief_version` — the queue for manual grounded-claim extraction
 

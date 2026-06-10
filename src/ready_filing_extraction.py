@@ -7,12 +7,16 @@ free-tier quota is protected by surfacing quota errors as a distinct
 exception so callers can back off instead of retrying.
 """
 
+import logging
+
 from src.claim_extraction_status import (
     mark_claim_extraction_failed,
     mark_claim_extraction_pending_review,
 )
 from src.claim_extractor import extract_and_store_claims
 from src.database import get_supabase_client
+
+_logger = logging.getLogger(__name__)
 
 # Marker strings that identify Gemini quota / rate-limit / availability
 # errors (google.genai ClientError 429 or ServerError 503) without a hard
@@ -124,6 +128,11 @@ def extract_claims_for_ready_filing(
         raise
     except Exception as exc:
         detail = str(exc)
+        # Full provider detail goes to backend logs and the filing row only;
+        # public responses always carry a generic message instead.
+        _logger.error(
+            "Claim extraction failed for %s: %s", accession_number, detail
+        )
         mark_claim_extraction_failed(
             accession_number, detail[:_MAX_STORED_ERROR_CHARS]
         )
