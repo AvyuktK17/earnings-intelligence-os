@@ -9,18 +9,23 @@ from src.filing_exhibits import get_filing_exhibits, select_earnings_release_exh
 from src.process_filing_exhibit import process_earnings_release_exhibit
 
 
-def _existing_exhibit_ingestion(supabase, accession_number: str) -> dict | None:
-    """Return stats for an already-ingested earnings-release exhibit, if any.
+def _existing_document_ingestion(
+    supabase, accession_number: str, filename: str
+) -> dict | None:
+    """Return stats when the selected exhibit is already ingested and chunked.
 
-    Grounded claims reference exhibit chunks by id (with a RESTRICT foreign
-    key), so a filing whose exhibit is already chunked must never be
-    re-chunked by the worker — its existing document id is reused instead.
+    Reuse requires an exact filename match with the currently selected
+    candidate — never an arbitrary earnings-release document — so a filing
+    can upgrade to a better-ranked exhibit (e.g. press release over slide
+    deck) while a filing whose selected exhibit is unchanged keeps its
+    existing chunk ids. Grounded claims reference chunks by id (RESTRICT
+    foreign key), so the matched document is never re-chunked.
     """
     documents = (
         supabase.table("filing_documents")
         .select("id, filename")
         .eq("accession_number", accession_number)
-        .eq("document_type", "earnings_release")
+        .eq("filename", filename)
         .execute()
         .data
     )
@@ -57,10 +62,14 @@ def process_pending_exhibits(
     Selects at most `limit` 8-K filings with processing_status "chunked" and
     exhibit_processing_status "not_checked" (plus "failed" when
     include_failed is True), newest filing_date first. For each filing the
-    worker discovers the likely EX-99.1 exhibit, downloads/parses/uploads it,
-    chunks it, and records the outcome on the filing row. Rows already marked
-    "processed" or "not_found" are never selected again. One filing's failure
-    is recorded and never stops the rest of the batch. No AI calls.
+    worker discovers and ranks the likely earnings-release exhibit first;
+    if that exact document is already ingested and chunked it is reused,
+    otherwise it is downloaded/parsed/uploaded and chunked, and the filing's
+    earnings_release_document_id moves to it. Previously ingested
+    lower-ranked documents (and their chunks) are kept as secondary
+    evidence, never deleted. Rows already marked "processed" or "not_found"
+    are never selected again. One filing's failure is recorded and never
+    stops the rest of the batch. No AI calls.
 
     Args:
         limit: Maximum number of filings to process in this run.
@@ -93,19 +102,21 @@ def process_pending_exhibits(
         base = {"ticker": filing["ticker"], "accession_number": accession_number}
 
         try:
-            existing = _existing_exhibit_ingestion(supabase, accession_number)
-            if existing is not None:
-                mark_exhibit_processed(
-                    accession_number, existing["filing_document_id"]
-                )
-                results.append({**base, "status": "processed", **existing})
-                continue
-
             exhibits = get_filing_exhibits(filing["sec_url"])
             exhibit = select_earnings_release_exhibit(exhibits)
             if exhibit is None:
                 mark_exhibit_not_found(accession_number)
                 results.append({**base, "status": "not_found"})
+                continue
+
+            existing = _existing_document_ingestion(
+                supabase, accession_number, exhibit["filename"]
+            )
+            if existing is not None:
+                mark_exhibit_processed(
+                    accession_number, existing["filing_document_id"]
+                )
+                results.append({**base, "status": "processed", **existing})
                 continue
 
             processed = process_earnings_release_exhibit(accession_number)

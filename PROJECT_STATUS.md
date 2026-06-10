@@ -93,17 +93,22 @@ documents and exhibits idempotently.
   the batch
 * status lifecycle: `not_checked` → `processed` / `not_found` / `failed`;
   `processed` and `not_found` rows are never re-inspected
-* **chunk-preservation rule:** if a filing already has an earnings-release
-  document with stored chunks (e.g. the manually ingested AVGO 8-K), the
-  worker reuses the existing document id and never re-chunks — grounded
-  claims reference chunk ids with a RESTRICT foreign key, so existing
-  exhibit chunks must never be deleted
+* **chunk-preservation rule:** discovery and ranking always run first; an
+  existing document is reused only when its filename exactly matches the
+  currently selected best-ranked exhibit (so AVGO's EX-99.1 keeps its
+  chunk ids — grounded claims reference them with a RESTRICT foreign key —
+  while a filing can still upgrade from a slide deck to a press release);
+  on upgrade the filing's `earnings_release_document_id` moves to the new
+  document and the previously ingested document and its chunks are kept as
+  secondary evidence, never deleted
 * never calls Gemini; extraction stays manual (free-quota control and
   analyst oversight)
 * live results: AVGO `0001730168-26-000051` (17 chunks), NVDA
   `0001045810-26-000051` `q1fy27pr.htm` (13 chunks), AMD
-  `0000002488-26-000072` `amdq126earningsslidesfin.htm` (15 chunks) are
-  `processed`; non-earnings 8-Ks are `not_found`
+  `0000002488-26-000072` `q12026991.htm` (21 chunks; upgraded from the
+  slide deck, which remains stored as a secondary document), and QCOM
+  `0000804328-26-000060` are `processed`; non-earnings 8-Ks are
+  `not_found`
 
 ## Gemini claim extraction (complete, manual)
 
