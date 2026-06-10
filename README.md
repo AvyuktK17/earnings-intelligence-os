@@ -274,6 +274,82 @@ then, in Claude Code:
 and provide the printed markdown packet path. The skill produces a local
 `Claude-assisted draft for analyst review`; review it before any downstream use.
 
+### Claude-assisted narrative review workflow (Bundle B2.2)
+
+Imports the locally drafted narrative as a **private draft report**, then gives
+analysts approve / edit-and-approve / reject controls. **Claude generation stays
+manual and local — the backend never calls the Claude API or Gemini**, and no
+narrative is generated automatically.
+
+**End-to-end analyst workflow:**
+
+```bash
+# 1. Export the deterministic packet
+python export_report_packet.py --ticker AVGO --accession-number 0001730168-26-000051
+# 2. In Claude Code: /semiconductor-equity-research-report  (drafts a local .md)
+# 3. Import the local draft (dry run by default; --confirm to write)
+python import_claude_narrative.py \
+  --ticker AVGO \
+  --accession-number 0001730168-26-000051 \
+  --markdown-path output/narratives/avgo_0001730168_26_000051_claude_draft.md \
+  --packet-path output/report_packets/avgo_0001730168_26_000051_packet.md \
+  --source-report-id 1 \
+  --confirm
+# 4. Review in the dashboard's "Narrative Review" page (approve / edit / reject)
+```
+
+**Import service (`src/claude_narrative_import.py`).** Validates that the draft
+carries the exact `Claude-assisted draft for analyst review` label and is not
+empty/incomplete, computes the packet's SHA-256 for provenance, and inserts one
+`research_reports` row with `report_status = "draft"`,
+`generator_type = "claude_assisted"`, `imported_at`, `source_report_id`, and
+`source_packet_hash`. Evidence links are reused from the deterministic source
+report when given, else derived from the filing's trusted promoted claims. A
+completed `report_generation_runs` audit row is written. No trusted-claim
+mutation, no overwrite (always a new version). Version numbers share one
+sequence per `(ticker, report_type)` — the table's unique constraint is
+`(ticker, report_type, version_number)`, so deterministic and Claude-assisted
+versions are numbered together.
+
+**Review service (`src/research_report_review.py`).** Acts only on
+`claude_assisted` `draft` reports:
+
+- `approve_research_report` — draft → reviewed (in place);
+- `edit_and_approve_research_report` — preserves the original draft immutably as
+  `superseded` and creates a **new** `reviewed` version with the edited markdown
+  plus copied provenance and evidence links;
+- `reject_research_report` — draft → rejected with a required reason.
+
+Deterministic reports can never be driven through this workflow.
+
+**API endpoints** (all admin-protected via `X-Admin-Token`):
+
+- `GET /reports/review-queue` — Claude-assisted drafts only (with markdown +
+  evidence-link count);
+- `POST /reports/import-claude-draft` — validates the label and inserts a draft;
+- `POST /reports/{report_id}/approve`;
+- `POST /reports/{report_id}/edit-and-approve`;
+- `POST /reports/{report_id}/reject`.
+
+Missing/invalid token → 401, unknown report → 404, invalid state transition →
+400; error bodies never expose secrets or stack traces.
+
+**Draft / public visibility rules.** Public report endpoints (`/reports`,
+`/reports/latest/{ticker}`, `/reports/{id}`) exclude `draft`, `rejected`,
+`superseded`, and `failed` reports. They show deterministic reports
+(`human_reviewed_deterministic`) and reviewed Claude-assisted reports only.
+`/reports/latest/{ticker}` defaults to the most recent *visible* report. The
+admin **Narrative Review** page (`/reports/review`) is the only surface that
+exposes Claude-assisted drafts, and only with a saved admin token.
+
+**Frontend.** A new sidebar link, **Narrative Review** (`/reports/review`),
+shows draft queue cards (ticker, accession, version, imported timestamp, source
+report id, claim/evidence counts, packet-hash preview, rendered markdown
+preview) with Approve / Edit-and-Approve / Reject / Skip actions, reviewer-notes
+and rejection-reason fields, refresh-after-action, and clean empty/error states.
+The token never leaves browser session storage. Report list and viewer pages now
+label each report **Deterministic** vs **Claude-assisted (reviewed)**.
+
 ### Manual claim extraction (admin-triggered)
 
 `POST /extraction-ready/{accession_number}/extract` (optional body
@@ -405,7 +481,15 @@ environment (never printed). The quantitative endpoints are covered by
 covered offline by `test_static_dashboard_backfill.py`. The deterministic
 report-packet exporter is covered by `test_report_packet.py` (trusted-claims-only,
 grounding, determinism across reruns, and honest missing-data labelling; writes
-to a temp dir and never calls an LLM).
+to a temp dir and never calls an LLM). The Claude-assisted narrative workflow is
+covered by `test_claude_narrative_import.py` (validation, dry-run safety,
+versioning), `test_research_report_review.py` (approve / edit-and-approve /
+reject, invalid transitions, deterministic protection), and
+`test_api_report_review.py` (auth, drafts-only queue, public draft exclusion,
+404/400, no secret leakage). These create clearly-marked temporary draft rows
+and delete them (with evidence links and audit runs) in `finally` blocks; no
+trusted claims or deterministic reports are touched, and no Claude/Gemini call
+is ever made.
 
 ## Roadmap
 
@@ -425,6 +509,9 @@ to a temp dir and never calls an LLM).
   `Claude-assisted draft for analyst review`. No Claude API calls, no automatic
   narrative generation, no database writes; guardrails forbid invented ratings,
   target prices, forecasts, DCF, and consensus estimates.
-- **Bundle B2.2 — Claude API narrative assist (next):** an optional, human-
-  reviewed Claude-API narrative layer on top of the deterministic report (off
-  by default; never writes to trusted tables).
+- **Bundle B2.2 — Claude-assisted narrative review workflow (complete):**
+  imports locally drafted narratives as private draft reports and adds analyst
+  approve / edit-and-approve / reject controls plus a Narrative Review page.
+  Claude generation stays manual and local; the backend never calls the Claude
+  API or Gemini, and drafts are never published until approved.
+- **Bundle C — institutional UI redesign and final QA (next).**

@@ -25,6 +25,12 @@ from src.claim_promotion import promote_reviewed_claims
 from src.claim_review import approve_claim, approve_claim_with_edits, reject_claim
 from src.database import get_supabase_client
 from src.research_report_storage import generate_and_store_research_report
+from src.claude_narrative_import import REQUIRED_LABEL, insert_claude_draft
+from src.research_report_review import (
+    approve_research_report,
+    edit_and_approve_research_report,
+    reject_research_report,
+)
 from src.storage import create_signed_url
 from src.quantitative import (
     PEER_METRIC_FIELDS,
@@ -132,6 +138,19 @@ REPORT_EVIDENCE_COLUMNS = (
     "accession_number, document_key, section_name, supporting_excerpt"
 )
 
+# Report statuses that must never be exposed through public report endpoints.
+# Deterministic reports (human_reviewed_deterministic) and reviewed
+# Claude-assisted reports stay visible; drafts and dead-ends never leak.
+_HIDDEN_REPORT_STATUSES = ("draft", "rejected", "superseded", "failed")
+
+# Review-queue columns for Claude-assisted drafts (admin-only).
+REPORT_REVIEW_COLUMNS = (
+    "id, ticker, accession_number, report_type, report_status, version_number, "
+    "title, imported_at, source_report_id, source_packet_hash, "
+    "source_claim_count, source_metric_count, valuation_snapshot_date, "
+    "generator_type, markdown_content, generated_at"
+)
+
 
 @lru_cache(maxsize=1)
 def _supabase():
@@ -213,6 +232,25 @@ class GenerateReportRequest(BaseModel):
     ticker: str = Field(min_length=1)
     accession_number: str | None = None
     report_type: str = "earnings_update"
+
+
+class ImportClaudeDraftRequest(BaseModel):
+    ticker: str = Field(min_length=1)
+    accession_number: str | None = None
+    report_type: str = "earnings_update"
+    markdown_content: str = Field(min_length=1)
+    source_report_id: int | None = None
+    source_packet_hash: str | None = None
+
+
+class EditApproveReportRequest(BaseModel):
+    edited_markdown_content: str = Field(min_length=1)
+    reviewer_notes: str | None = None
+
+
+class RejectReportRequest(BaseModel):
+    rejection_reason: str = Field(min_length=1)
+    reviewer_notes: str | None = None
 
 
 @app.get("/health")
@@ -878,7 +916,14 @@ def list_reports(
     report_type: str | None = None,
     report_status: str | None = None,
 ) -> dict:
-    """Return stored research-report metadata, newest first."""
+    """Return public research-report metadata, newest first.
+
+    Public endpoint: draft, rejected, superseded, and failed reports are never
+    exposed. Deterministic reports and reviewed Claude-assisted reports show.
+    """
+    # A request for a non-public status returns nothing (never a leak).
+    if report_status is not None and report_status in _HIDDEN_REPORT_STATUSES:
+        return {"count": 0, "reports": []}
     query = _supabase().table("research_reports").select(REPORT_META_COLUMNS)
     if ticker is not None:
         query = query.eq("ticker", ticker.upper())
@@ -886,6 +931,7 @@ def list_reports(
         query = query.eq("report_type", report_type)
     if report_status is not None:
         query = query.eq("report_status", report_status)
+    query = query.not_.in_("report_status", _HIDDEN_REPORT_STATUSES)
     rows = query.order("generated_at", desc=True).execute().data
     for row in rows:
         row["pdf_available"] = bool(row.get("pdf_storage_path"))
@@ -905,14 +951,21 @@ def _report_evidence_links(supabase, report_id: int) -> list[dict]:
 
 @app.get("/reports/latest/{ticker}")
 def get_latest_report(ticker: str, report_type: str = "earnings_update") -> dict:
-    """Return the latest stored report for a ticker; 404 when none exists."""
+    """Return the latest public report for a ticker; 404 when none exists.
+
+    Public endpoint: only visible reports (deterministic, or reviewed
+    Claude-assisted) are considered. Drafts and dead-ends are excluded, so this
+    defaults to reviewed/published reports. Ordered by recency across generator
+    types (Claude-assisted versions are a separate sequence from deterministic).
+    """
     supabase = _supabase()
     rows = (
         supabase.table("research_reports")
         .select(REPORT_FULL_COLUMNS)
         .eq("ticker", ticker.upper())
         .eq("report_type", report_type)
-        .order("version_number", desc=True)
+        .not_.in_("report_status", _HIDDEN_REPORT_STATUSES)
+        .order("generated_at", desc=True)
         .limit(1)
         .execute()
         .data
@@ -927,14 +980,50 @@ def get_latest_report(ticker: str, report_type: str = "earnings_update") -> dict
     return report
 
 
+# Declared before /reports/{report_id} so the literal path is not captured by
+# the {report_id:int} route (which would 422 on "review-queue").
+def _evidence_link_count(supabase, report_id: int) -> int:
+    rows = (
+        supabase.table("report_evidence_links")
+        .select("id")
+        .eq("research_report_id", report_id)
+        .execute()
+        .data
+    )
+    return len(rows)
+
+
+@app.get("/reports/review-queue", dependencies=[Depends(require_admin_token)])
+def report_review_queue() -> dict:
+    """Return Claude-assisted draft reports awaiting analyst review (admin)."""
+    supabase = _supabase()
+    rows = (
+        supabase.table("research_reports")
+        .select(REPORT_REVIEW_COLUMNS)
+        .eq("generator_type", "claude_assisted")
+        .eq("report_status", "draft")
+        .order("imported_at", desc=True)
+        .execute()
+        .data
+    )
+    for row in rows:
+        row["evidence_link_count"] = _evidence_link_count(supabase, row["id"])
+    return {"count": len(rows), "reports": rows}
+
+
 @app.get("/reports/{report_id}")
 def get_report(report_id: int) -> dict:
-    """Return one stored report with content, evidence links, and PDF path."""
+    """Return one public report with content, evidence links, and PDF path.
+
+    Public endpoint: draft, rejected, superseded, and failed reports are hidden
+    (404), so this never exposes an un-reviewed Claude-assisted draft.
+    """
     supabase = _supabase()
     rows = (
         supabase.table("research_reports")
         .select(REPORT_FULL_COLUMNS)
         .eq("id", report_id)
+        .not_.in_("report_status", _HIDDEN_REPORT_STATUSES)
         .execute()
         .data
     )
@@ -990,6 +1079,86 @@ def generate_report(request: GenerateReportRequest) -> dict:
     except Exception:
         # No secrets, stack traces, or provider details to callers.
         raise HTTPException(status_code=500, detail="Report generation failed.")
+
+
+# --- Claude-assisted narrative review (admin-only) -----------------------
+
+
+@app.post(
+    "/reports/import-claude-draft", dependencies=[Depends(require_admin_token)]
+)
+def import_claude_draft(request: ImportClaudeDraftRequest) -> dict:
+    """Import a Claude-assisted narrative as a private draft (admin)."""
+    if REQUIRED_LABEL not in request.markdown_content:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Draft is missing the required label "
+                f"{REQUIRED_LABEL!r}; refusing to import."
+            ),
+        )
+    try:
+        return insert_claude_draft(
+            ticker=request.ticker,
+            markdown_content=request.markdown_content,
+            accession_number=request.accession_number,
+            source_report_id=request.source_report_id,
+            source_packet_hash=request.source_packet_hash,
+            report_type=request.report_type,
+            supabase=_supabase(),
+        )
+    except ValueError as exc:
+        raise _http_error(exc)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Draft import failed.")
+
+
+@app.post(
+    "/reports/{report_id}/approve", dependencies=[Depends(require_admin_token)]
+)
+def approve_report(report_id: int, request: ReviewNotesRequest) -> dict:
+    """Approve a Claude-assisted draft (draft → reviewed) (admin)."""
+    try:
+        return approve_research_report(report_id, request.reviewer_notes)
+    except ValueError as exc:
+        raise _http_error(exc)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Report approval failed.")
+
+
+@app.post(
+    "/reports/{report_id}/edit-and-approve",
+    dependencies=[Depends(require_admin_token)],
+)
+def edit_and_approve_report(
+    report_id: int, request: EditApproveReportRequest
+) -> dict:
+    """Create a reviewed version from edited markdown; supersede draft (admin)."""
+    try:
+        return edit_and_approve_research_report(
+            report_id,
+            request.edited_markdown_content,
+            request.reviewer_notes,
+        )
+    except ValueError as exc:
+        raise _http_error(exc)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Report edit-and-approve failed.")
+
+
+@app.post(
+    "/reports/{report_id}/reject", dependencies=[Depends(require_admin_token)]
+)
+def reject_report(report_id: int, request: RejectReportRequest) -> dict:
+    """Reject a Claude-assisted draft (draft → rejected) (admin)."""
+    try:
+        return reject_research_report(
+            report_id, request.rejection_reason, request.reviewer_notes
+        )
+    except ValueError as exc:
+        raise _http_error(exc)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Report rejection failed.")
 
 
 @app.get("/admin/validate", dependencies=[Depends(require_admin_token)])

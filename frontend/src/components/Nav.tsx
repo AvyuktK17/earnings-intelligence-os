@@ -14,6 +14,7 @@ const LINKS = [
   { href: "/review-queue", label: "Review Queue" },
   { href: "/evidence", label: "Evidence Explorer" },
   { href: "/reports", label: "Reports" },
+  { href: "/reports/review", label: "Narrative Review" },
   { href: "/briefs/latest/AVGO", label: "Latest Brief" },
 ];
 

@@ -427,6 +427,55 @@ export interface ReportGenerateResult {
   pdf_storage_path: string;
 }
 
+// --- Claude-assisted narrative review (Bundle B2.2) ----------------------
+
+export interface ReportReviewItem {
+  id: number;
+  ticker: string;
+  accession_number: string | null;
+  report_type: string;
+  report_status: string;
+  version_number: number;
+  title: string;
+  imported_at: string | null;
+  source_report_id: number | null;
+  source_packet_hash: string | null;
+  source_claim_count: number | null;
+  source_metric_count: number | null;
+  valuation_snapshot_date: string | null;
+  generator_type: string;
+  markdown_content: string;
+  generated_at: string;
+  evidence_link_count: number;
+}
+
+export interface ReportReviewQueueResponse {
+  count: number;
+  reports: ReportReviewItem[];
+}
+
+export interface ReviewedReport {
+  id: number;
+  ticker: string;
+  accession_number: string | null;
+  report_type: string;
+  report_status: string;
+  version_number: number;
+  title: string;
+  markdown_content: string;
+  generator_type: string;
+  source_report_id: number | null;
+  source_packet_hash: string | null;
+  imported_at: string | null;
+  reviewed_at: string | null;
+  reviewer_notes: string | null;
+  rejection_reason: string | null;
+  source_claim_count: number | null;
+  source_metric_count: number | null;
+  valuation_snapshot_date: string | null;
+  generated_at: string;
+}
+
 export class ApiError extends Error {
   status: number;
 
@@ -675,6 +724,47 @@ export const api = {
         ticker: body.ticker,
         accession_number: body.accession_number ?? null,
         report_type: body.report_type ?? "earnings_update",
+      }),
+    });
+  },
+
+  // --- Claude-assisted narrative review (admin) -------------------------
+
+  /** Admin-only: the review queue is a GET that carries the admin token. */
+  getReportReviewQueue() {
+    const token = getAdminToken();
+    return request<ReportReviewQueueResponse>("/reports/review-queue", {
+      headers: token ? { "X-Admin-Token": token } : {},
+    });
+  },
+
+  approveReport(reportId: number, reviewerNotes?: string) {
+    return request<ReviewedReport>(`/reports/${reportId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ reviewer_notes: reviewerNotes || null }),
+    });
+  },
+
+  editAndApproveReport(
+    reportId: number,
+    editedMarkdownContent: string,
+    reviewerNotes?: string,
+  ) {
+    return request<ReviewedReport>(`/reports/${reportId}/edit-and-approve`, {
+      method: "POST",
+      body: JSON.stringify({
+        edited_markdown_content: editedMarkdownContent,
+        reviewer_notes: reviewerNotes || null,
+      }),
+    });
+  },
+
+  rejectReport(reportId: number, rejectionReason: string, reviewerNotes?: string) {
+    return request<ReviewedReport>(`/reports/${reportId}/reject`, {
+      method: "POST",
+      body: JSON.stringify({
+        rejection_reason: rejectionReason,
+        reviewer_notes: reviewerNotes || null,
       }),
     });
   },

@@ -51,11 +51,17 @@ Thirteen tables are in use (the last three added in Bundle B1):
 * `qualitative_claims` — trusted human-reviewed claims; promoted rows carry `proposed_claim_id`, `source_chunk_id`, `document_key`, `promoted_at` (note: this table has **no `id` column** — promoted rows are keyed by `proposed_claim_id`)
 * `earnings_briefs` — versioned brief rows; unique versions per accession; stores `markdown_content`, `storage_path`, claim counts, `generated_at`
 * `pipeline_runs` — run bookkeeping
-* `research_reports` — versioned deterministic research reports; stores
-  `report_type`, `report_status` (`human_reviewed_deterministic`),
-  `version_number`, `title`, `markdown_content`, `html_content`,
-  `pdf_storage_path`, `source_claim_count`, `source_metric_count`,
-  `valuation_snapshot_date`, `generator_type` (`deterministic`), `generated_at`
+* `research_reports` — versioned research reports (deterministic **and**
+  imported Claude-assisted narratives); stores `report_type`, `report_status`
+  (`human_reviewed_deterministic` for deterministic; `draft` / `reviewed` /
+  `superseded` / `rejected` for Claude-assisted; plus `failed`),
+  `version_number` (one sequence per `(ticker, report_type)`; unique on
+  `(ticker, report_type, version_number)`), `title`, `markdown_content`,
+  `html_content`, `pdf_storage_path`, `source_claim_count`,
+  `source_metric_count`, `valuation_snapshot_date`, `generator_type`
+  (`deterministic` / `claude_assisted`), `generated_at`, and the
+  Bundle B2.2 columns `source_report_id` (self-FK), `source_packet_hash`,
+  `imported_at`, `reviewed_at`, `reviewer_notes`, `rejection_reason`
 * `report_evidence_links` — one row per trusted claim used in a report
   (`research_report_id`, `qualitative_claim_id`, `source_chunk_id`,
   `accession_number`, `document_key`, `section_name`, `supporting_excerpt`)
@@ -561,9 +567,96 @@ never committed.
 
 ### Limitations (Bundle B2.1)
 
-No Claude API call yet, no automatic narrative generation, no persistence of the
-drafted narrative. Next milestone: **Bundle B2.2 — optional human-reviewed
-Claude-API narrative assist** (off by default; never writes to trusted tables).
+No Claude API call, no automatic narrative generation, no persistence of the
+drafted narrative (persistence/review arrives in Bundle B2.2).
+
+## Claude-assisted narrative review workflow (Bundle B2.2, complete)
+
+Imports locally drafted Claude-assisted narratives as **private draft reports**
+and adds analyst review controls. **Claude generation stays manual and local —
+the backend never calls the Claude API or Gemini**, and nothing is published
+until a human approves it.
+
+### New `research_reports` columns (in use)
+
+`source_report_id` (self-FK to the deterministic source report),
+`source_packet_hash` (SHA-256 of the report packet the narrative was drafted
+from), `imported_at`, `rejection_reason`, plus the existing `reviewed_at` /
+`reviewer_notes`. Report statuses now span `human_reviewed_deterministic`
+(deterministic, published), `draft` / `reviewed` / `superseded` / `rejected`
+(Claude-assisted lifecycle), and `failed`. **Version numbers share one sequence
+per `(ticker, report_type)`** — the unique constraint is
+`(ticker, report_type, version_number)`, so deterministic and Claude-assisted
+versions are numbered together (per-generator versioning would collide).
+
+### Import service
+
+`src/claude_narrative_import.py` + `import_claude_narrative.py` +
+`test_claude_narrative_import.py`:
+
+* `import_claude_assisted_narrative(ticker, markdown_path, accession_number=None,
+  source_report_id=None, source_packet_path=None, report_type="earnings_update")`
+  validates the exact `Claude-assisted draft for analyst review` label and
+  rejects empty/incomplete drafts, hashes the packet, and inserts one draft
+  `research_reports` row (`report_status="draft"`,
+  `generator_type="claude_assisted"`, `imported_at`, provenance fields, counts).
+  Evidence links are reused from the source report when given, else derived from
+  the filing's trusted promoted claims; a completed `report_generation_runs`
+  audit row is written. No trusted-claim mutation, no overwrite — always a new
+  version
+* CLI is **dry-run by default**; `--confirm` is required before any write; it
+  prints a readable summary and never prints secrets
+* the API `POST /reports/import-claude-draft` shares the same insert core
+  (`insert_claude_draft`)
+
+### Review service
+
+`src/research_report_review.py` + `test_research_report_review.py` act only on
+`claude_assisted` `draft` reports:
+
+* `approve_research_report` — draft → `reviewed` (sets `reviewed_at`,
+  `reviewer_notes`)
+* `edit_and_approve_research_report` — preserves the original draft immutably as
+  `superseded` and inserts a **new** `reviewed` version (next version number,
+  edited markdown, copied provenance + evidence links)
+* `reject_research_report` — draft → `rejected` with a required `rejection_reason`
+* deterministic reports are never reviewable through this workflow; acting on a
+  non-draft is an invalid transition
+
+### Report-review API (admin-only)
+
+* `GET /reports/review-queue` — Claude-assisted drafts only, with markdown and
+  evidence-link count (declared before `/reports/{report_id}` so the literal
+  path is not captured by the int route)
+* `POST /reports/import-claude-draft` — validates the label, inserts a draft
+* `POST /reports/{id}/approve` · `/edit-and-approve` · `/reject`
+* missing/invalid token → 401, unknown report → 404, invalid transition → 400;
+  bodies never expose secrets or stack traces
+
+### Draft / public visibility rules
+
+Public report endpoints (`/reports`, `/reports/latest/{ticker}`,
+`/reports/{id}`) exclude `draft`, `rejected`, `superseded`, and `failed` reports
+(`_HIDDEN_REPORT_STATUSES`); they show deterministic
+(`human_reviewed_deterministic`) and reviewed Claude-assisted reports only, and
+`/reports/latest` defaults to the most recent visible report. The admin
+**Narrative Review** page is the only surface exposing Claude-assisted drafts.
+
+### Frontend (Bundle B2.2)
+
+`frontend/src/app/reports/review/page.tsx` (sidebar link **Narrative Review**):
+admin-token-gated queue cards (ticker, accession, version, imported timestamp,
+source report id, claim/evidence counts, packet-hash preview, rendered markdown
+preview) with Approve / Edit-and-Approve / Reject / Skip, reviewer-notes and
+rejection-reason fields, refresh-after-action, and clean empty/error states. The
+report list and viewer pages label each report **Deterministic** vs
+**Claude-assisted (reviewed)**. The admin token never leaves session storage.
+
+### Limitations (Bundle B2.2)
+
+Still no automatic Claude API call (generation is manual and local); single
+shared admin token; narrative drafts are imported from local files only. Next
+milestone: **Bundle C — institutional UI redesign and final QA**.
 
 ## Deployment (complete — MVP live)
 
@@ -611,7 +704,13 @@ promotion-driven `approved` lifecycle), `test_api_company_detail.py`,
 `test_api_admin_validate.py`, `test_report_packet.py` (deterministic
 report-packet exporter: trusted-claims-only, grounding, determinism across
 reruns, honest missing-data labelling; writes to a temp dir, never calls an
-LLM), and `test_cleanup_legacy_claims.py`
+LLM), `test_claude_narrative_import.py` /
+`test_research_report_review.py` / `test_api_report_review.py` (Claude-assisted
+narrative import + review: label validation, dry-run safety, versioning,
+approve / edit-and-approve / reject, invalid-transition guards, deterministic
+protection, auth, drafts-only queue, public draft exclusion, no secret leakage;
+temporary draft rows are deleted in `finally` blocks and no Claude/Gemini call
+is made), and `test_cleanup_legacy_claims.py`
 (dry-run safety only — the destructive mode is never run by tests).
 Every extraction test
 monkeypatches the Gemini-backed extractor — automated tests never consume

@@ -181,6 +181,23 @@ export default function LatestReportPage({
 
       {report && (
         <>
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span
+              className={`rounded border px-1.5 py-px font-mono ${
+                report.generator_type === "claude_assisted"
+                  ? "border-warning/50 text-warning"
+                  : "border-info/50 text-info"
+              }`}
+            >
+              {report.generator_type === "claude_assisted"
+                ? "Claude-assisted (reviewed)"
+                : "Deterministic"}
+            </span>
+            <span className="rounded border border-edge px-1.5 py-px font-mono text-muted">
+              {report.report_status.replace(/_/g, " ")}
+            </span>
+          </div>
+
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard
               label="Version"

@@ -13,6 +13,21 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function GeneratorBadge({ generator }: { generator: string }) {
+  const isClaude = generator === "claude_assisted";
+  const label = isClaude ? "Claude-assisted" : "Deterministic";
+  const cls = isClaude
+    ? "border-warning/50 text-warning"
+    : "border-info/50 text-info";
+  return (
+    <span
+      className={`inline-block rounded border px-1.5 py-px font-mono text-[11px] leading-4 ${cls}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 export default function ReportsIndexPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [reports, setReports] = useState<ReportMeta[] | null>(null);
@@ -114,6 +129,7 @@ export default function ReportsIndexPage() {
                   <tr className="border-b border-edge text-[11px] uppercase tracking-wider text-muted">
                     <th className="py-1.5 pr-3 font-medium">Ticker</th>
                     <th className="py-1.5 pr-3 font-medium">Type</th>
+                    <th className="py-1.5 pr-3 font-medium">Source</th>
                     <th className="py-1.5 pr-3 font-medium">Status</th>
                     <th className="py-1.5 pr-3 font-medium text-right">Ver</th>
                     <th className="py-1.5 pr-3 font-medium text-right">Claims</th>
@@ -139,6 +155,9 @@ export default function ReportsIndexPage() {
                       </td>
                       <td className="py-1.5 pr-3 text-muted">
                         {r.report_type.replace(/_/g, " ")}
+                      </td>
+                      <td className="py-1.5 pr-3">
+                        <GeneratorBadge generator={r.generator_type} />
                       </td>
                       <td className="py-1.5 pr-3">
                         <StatusBadge status={r.report_status} />
