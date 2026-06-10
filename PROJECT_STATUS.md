@@ -187,7 +187,20 @@ Read endpoints (public):
 
 * `GET /health` — liveness
 * `GET /companies` — watchlist (ticker, company_name, cik, business_model)
-  ordered by ticker; feeds the dashboard's filings filter
+  ordered by ticker; feeds the dashboard's filings filter, sidebar
+  Companies section, and brief tabs
+* `GET /companies/{ticker}` — one company's research-pipeline summary:
+  filing + chunked counts, extraction-ready filings (compact rows),
+  trusted promoted claim count, latest brief metadata (no markdown body),
+  recent filings (10); ticker uppercased; 404 for unknown companies
+* `GET /overview` — cross-company dashboard payload: companies/filings/
+  extraction-ready/pending-grounded/trusted/brief totals plus one status
+  row per company (extraction-ready count, trusted count, latest brief
+  version, latest filing date)
+* `GET /admin/validate` — the only token-protected GET; returns
+  `{"status": "ok"}` for a valid `X-Admin-Token`, 401 otherwise, safe 500
+  when the server token is unconfigured; used by the Admin Access panel
+  to verify saved tokens without mutations
 * `GET /filings?ticker=&status=&limit=` — filing feed, newest first; ticker
   uppercased; `limit` validated with `Query(ge=1, le=100)` (422 outside range)
 * `GET /filings/{accession_number}` — filing + `filing_documents` + chunk
@@ -258,16 +271,26 @@ Brief). Deployed on Vercel at
 * shared typed client in `src/lib/api.ts` with explicit loading and error
   states on every page
 * **Admin Access panel** at the bottom of the sidebar: token input with
-  Save/Clear and a connected indicator. The token lives in browser session
-  storage only (never committed, never in a `NEXT_PUBLIC_` variable) and is
-  attached as `X-Admin-Token` to protected POSTs only; a 401 surfaces as
-  "Admin token missing or invalid."
+  Save/Clear. Saved tokens are verified through `GET /admin/validate` and
+  the indicator shows `connected` / `invalid token` / `not connected`
+  (plus `checking…` / `unverified` transients). The token lives in browser
+  session storage only (never committed, never in a `NEXT_PUBLIC_`
+  variable) and is attached as `X-Admin-Token` to protected POSTs and the
+  validate route only; a 401 surfaces as "Admin token missing or invalid."
 
 Routes:
 
-* `/` — overview: stat cards (recent filings, extraction-ready filings,
-  pending grounded claims, latest AVGO brief version) + latest-filings
-  table; a missing brief renders as "—", not an error
+* `/` — cross-company overview from `GET /overview`: six stat cards
+  (companies, filings tracked, extraction ready, pending review, trusted
+  claims, stored briefs) + per-company status table (ticker → company
+  page, extraction-ready count, trusted count, latest brief link, latest
+  filing date) + latest-filings table
+* `/companies/[ticker]` — company research page: name/ticker/CIK/business
+  model header, four summary cards, latest-brief panel with "View latest
+  brief" link, extraction-ready filings table with extraction badges,
+  recent filings table; clean states for unknown tickers and missing
+  briefs; the sidebar has a dynamic Companies section from
+  `GET /companies` and ticker cells in filings tables link here
 * `/filings` — feed with ticker/status/limit filters and status badges;
   the ticker list loads dynamically from `GET /companies` (with a static
   fallback if the endpoint fails)
@@ -286,8 +309,11 @@ Routes:
   the terminal promotion that flips the filing to `approved` (the Review
   Queue can no longer trigger it because its per-filing group disappears
   once the last draft is reviewed); approved filings with a stored brief
-  show a "View latest brief" link; accession numbers link to the filing
-  detail page; clean empty state
+  show a "View latest brief" link; an admin-only **Generate first brief**
+  button appears for approved filings with trusted claims but no stored
+  brief (calls `POST /briefs/generate` — no Swagger needed for the first
+  version); accession numbers link to the filing detail page; clean empty
+  state
 * `/review-queue` — grounded pending claims grouped by filing; approve /
   edit-and-approve / reject with optional reviewer notes; per-filing
   "Promote reviewed claims for this filing" button (scoped promotion only —
@@ -338,35 +364,65 @@ reuse), `test_api_error_redaction.py` (no provider details in public
 payloads), `test_claim_extraction_status.py`,
 `test_ready_filing_extraction.py`, `test_promotion_lifecycle.py`
 (scoped promotion approves exactly the fully reviewed filing),
-and `test_api_manual_extraction.py`
+`test_api_manual_extraction.py`
 (auth, validation, 404/400/429/safe-500 mapping, and the
-promotion-driven `approved` lifecycle). Every extraction test
+promotion-driven `approved` lifecycle), `test_api_company_detail.py`,
+`test_api_overview.py` (totals consistent with per-company rows),
+`test_api_admin_validate.py`, and `test_cleanup_legacy_claims.py`
+(dry-run safety only — the destructive mode is never run by tests).
+Every extraction test
 monkeypatches the Gemini-backed extractor — automated tests never consume
-free-tier quota.
+free-tier quota. `test_api_briefs.py` is version-agnostic (analysts
+generate new brief versions in production).
 Write-endpoint tests supply a temporary admin token via the environment
 (never printed),
 insert clearly marked temporary rows and delete them in `finally` blocks;
-real trusted AVGO claims and the persisted v1 brief are never modified.
+real trusted claims and persisted briefs are never modified.
 Frontend checks: `cd frontend && npm run lint && npm run build`.
 Known cosmetic warning when importing TestClient:
 `StarletteDeprecationWarning: Using httpx with starlette.testclient is
 deprecated; install httpx2 instead.` — harmless, left as-is.
 
-## Known issues
+## Legacy cleanup script
 
-* Two ungrounded legacy pending AVGO primary-document claims remain in
-  `proposed_claims` (`source_chunk_id` null). They are excluded from the
-  review queue, approval, promotion, and briefs by design; they can only be
-  rejected. Resolve by re-extracting the primary document with the current
-  grounded extractor or rejecting them.
+`cleanup_legacy_claims.py` targets only `proposed_claims` rows with
+`source_chunk_id` null **and** `review_status = "pending"` (drafts from the
+pre-grounding extractor). Default invocation is a dry run that prints the
+matching rows; deletion requires the explicit `--confirm` flag and is never
+run by tests, deployment, or GitHub Actions. Deletes repeat the safety
+predicates per row id, so a row reviewed in the meantime is left alone.
 
-## Next milestone
+## Known limitations
 
-1. Extract, review, promote, and generate briefs for NVDA, AMD, INTC, and
-   QCOM.
-2. Add company pages.
-3. Polish the cross-company overview.
-4. Clean up legacy rows and finalize demo assets.
+* Two ungrounded legacy pending AVGO primary-document claims (ids 11, 12)
+  remain in `proposed_claims`. They are excluded from the review queue,
+  approval, promotion, and briefs by design. Remove them with
+  `python cleanup_legacy_claims.py --confirm` when ready (dry run is safe
+  to preview anytime).
+* Auth is a single shared admin token — no user accounts, roles, or audit
+  trail; suitable for the MVP only.
+* 404-vs-400 mapping for workflow errors keys on `ValueError` message
+  prefixes (documented as fragile; typed exceptions are the upgrade path).
+* Gemini quota detection is string-marker-based ("429", "quota", "rate")
+  and could misclassify rare non-quota errors as 429.
+* Exhibit selection is filename-heuristic; unusual naming conventions may
+  need new narrow patterns (INTC, the last holdout, resolved without one —
+  it has 2 extraction-ready filings and a v1 brief).
+* The deployed API serves Gemini extraction only on explicit admin action;
+  brief content quality still depends on analyst review rigor.
+
+## Live URLs
+
+* Dashboard (Vercel): <https://earnings-intelligence-os.vercel.app>
+* API (Render): <https://earnings-intelligence-os-api.onrender.com>
+
+## Status
+
+Level 3 product polish is complete: all five companies (AVGO, NVDA, AMD,
+QCOM, INTC) have extraction-ready exhibits, trusted human-reviewed claims,
+and at least one persisted brief; the dashboard covers the full workflow
+end to end (monitor → exhibits → extraction → review → promotion → briefs)
+with cross-company and per-company views.
 
 ## Safety rules
 

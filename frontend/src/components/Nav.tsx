@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import AdminAccess from "@/components/AdminAccess";
+import { api } from "@/lib/api";
 
 const LINKS = [
   { href: "/", label: "Overview" },
@@ -12,6 +14,9 @@ const LINKS = [
   { href: "/briefs/latest/AVGO", label: "Latest Brief" },
 ];
 
+// Fallback only if GET /companies fails; the live list comes from the API.
+const FALLBACK_TICKERS = ["AMD", "AVGO", "INTC", "NVDA", "QCOM"];
+
 function isActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
   if (href.startsWith("/briefs")) return pathname.startsWith("/briefs");
@@ -20,6 +25,25 @@ function isActive(pathname: string, href: string): boolean {
 
 export default function Nav() {
   const pathname = usePathname();
+  const [tickers, setTickers] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCompanies() {
+      try {
+        const result = await api.getCompanies();
+        if (!cancelled) setTickers(result.companies.map((c) => c.ticker));
+      } catch {
+        if (!cancelled) setTickers(FALLBACK_TICKERS);
+      }
+    }
+
+    loadCompanies();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <aside className="w-56 shrink-0 border-r border-edge bg-surface flex flex-col min-h-screen">
@@ -47,6 +71,28 @@ export default function Nav() {
             {link.label}
           </Link>
         ))}
+
+        <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-faint">
+          Companies
+        </div>
+        {(tickers ?? []).map((ticker) => (
+          <Link
+            key={ticker}
+            href={`/companies/${encodeURIComponent(ticker)}`}
+            className={`block rounded px-3 py-1 font-mono text-[12px] transition-colors ${
+              pathname === `/companies/${ticker}`
+                ? "bg-surface-raised text-accent font-medium"
+                : "text-muted hover:text-foreground hover:bg-surface-raised"
+            }`}
+          >
+            {ticker}
+          </Link>
+        ))}
+        {tickers === null && (
+          <div className="px-3 py-1 font-mono text-[11px] text-faint">
+            loading…
+          </div>
+        )}
       </nav>
       <AdminAccess />
       <div className="px-4 py-3 border-t border-edge text-[11px] text-faint font-mono">

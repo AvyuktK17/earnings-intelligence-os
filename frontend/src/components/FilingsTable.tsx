@@ -38,8 +38,13 @@ export default function FilingsTable({
               key={filing.id}
               className="border-b border-edge/60 hover:bg-surface-raised"
             >
-              <td className="px-2 py-1.5 font-mono font-medium text-accent">
-                {filing.ticker}
+              <td className="px-2 py-1.5 font-mono font-medium">
+                <Link
+                  href={`/companies/${encodeURIComponent(filing.ticker)}`}
+                  className="text-accent hover:underline"
+                >
+                  {filing.ticker}
+                </Link>
               </td>
               <td className="px-2 py-1.5 font-mono">{filing.form}</td>
               <td className="px-2 py-1.5 font-mono text-muted">

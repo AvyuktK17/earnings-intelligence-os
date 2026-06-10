@@ -65,6 +65,13 @@ BRIEF_COLUMNS = (
     "interpretive_claim_count, generated_at"
 )
 
+# Brief metadata without the full markdown body, for summary payloads.
+BRIEF_META_COLUMNS = (
+    "id, ticker, accession_number, version_number, storage_path, "
+    "trusted_claim_count, factual_claim_count, interpretive_claim_count, "
+    "generated_at"
+)
+
 CLAIM_COLUMNS = (
     "id, ticker, accession_number, document_key, theme, claim_text, "
     "supporting_excerpt, source_chunk_id, source_chunk_index, claim_type, "
@@ -161,6 +168,234 @@ def list_companies() -> dict:
         .data
     )
     return {"count": len(companies), "companies": companies}
+
+
+def _trusted_promoted_count(supabase, ticker: str | None = None) -> int:
+    """Count human-promoted trusted rows (legacy seeded rows excluded)."""
+    query = (
+        supabase.table("qualitative_claims")
+        .select("proposed_claim_id", count="exact")
+        .not_.is_("proposed_claim_id", "null")
+    )
+    if ticker is not None:
+        query = query.eq("ticker", ticker)
+    return query.execute().count or 0
+
+
+def _extraction_ready_filings(supabase, ticker: str) -> list[dict]:
+    """Compact extraction-ready rows for one company (no per-claim counts)."""
+    filings = (
+        supabase.table("filings")
+        .select(
+            "id, accession_number, form, filing_date, "
+            "earnings_release_document_id, claim_extraction_status"
+        )
+        .eq("ticker", ticker)
+        .eq("exhibit_processing_status", "processed")
+        .not_.is_("earnings_release_document_id", "null")
+        .order("filing_date", desc=True)
+        .execute()
+        .data
+    )
+    rows = []
+    for filing in filings:
+        documents = (
+            supabase.table("filing_documents")
+            .select("filename")
+            .eq("id", filing["earnings_release_document_id"])
+            .execute()
+            .data
+        )
+        filename = documents[0]["filename"] if documents else None
+        chunk_count = (
+            supabase.table("filing_chunks")
+            .select("id", count="exact")
+            .eq("filing_document_id", filing["earnings_release_document_id"])
+            .execute()
+            .count
+            or 0
+        )
+        rows.append(
+            {
+                "accession_number": filing["accession_number"],
+                "form": filing["form"],
+                "filing_date": filing["filing_date"],
+                "filename": filename,
+                "document_key": f"exhibit:{filename}" if filename else None,
+                "chunk_count": chunk_count,
+                "claim_extraction_status": filing["claim_extraction_status"],
+            }
+        )
+    return rows
+
+
+@app.get("/companies/{ticker}")
+def get_company(ticker: str) -> dict:
+    """Return one monitored company with its research-pipeline summary."""
+    supabase = _supabase()
+    normalized = ticker.upper()
+
+    companies = (
+        supabase.table("companies")
+        .select("ticker, company_name, cik, business_model")
+        .eq("ticker", normalized)
+        .execute()
+        .data
+    )
+    if not companies:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No monitored company found for ticker={normalized!r}.",
+        )
+
+    filings_count = (
+        supabase.table("filings")
+        .select("id", count="exact")
+        .eq("ticker", normalized)
+        .execute()
+        .count
+        or 0
+    )
+    chunked_count = (
+        supabase.table("filings")
+        .select("id", count="exact")
+        .eq("ticker", normalized)
+        .eq("processing_status", "chunked")
+        .execute()
+        .count
+        or 0
+    )
+    recent_filings = (
+        supabase.table("filings")
+        .select(FILING_COLUMNS)
+        .eq("ticker", normalized)
+        .order("filing_date", desc=True)
+        .limit(10)
+        .execute()
+        .data
+    )
+    extraction_ready = _extraction_ready_filings(supabase, normalized)
+    briefs = (
+        supabase.table("earnings_briefs")
+        .select(BRIEF_META_COLUMNS)
+        .eq("ticker", normalized)
+        .order("generated_at", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+
+    return {
+        "company": companies[0],
+        "filings_count": filings_count,
+        "chunked_filings_count": chunked_count,
+        "extraction_ready_count": len(extraction_ready),
+        "trusted_claim_count": _trusted_promoted_count(supabase, normalized),
+        "latest_brief": briefs[0] if briefs else None,
+        "recent_filings": recent_filings,
+        "extraction_ready": extraction_ready,
+    }
+
+
+@app.get("/overview")
+def get_overview() -> dict:
+    """Cross-company research dashboard summary. Public and read-only."""
+    supabase = _supabase()
+
+    companies = (
+        supabase.table("companies")
+        .select("ticker, company_name")
+        .order("ticker", desc=False)
+        .execute()
+        .data
+    )
+    total_filings = (
+        supabase.table("filings").select("id", count="exact").execute().count or 0
+    )
+    pending_grounded = (
+        supabase.table("proposed_claims")
+        .select("id", count="exact")
+        .eq("review_status", "pending")
+        .not_.is_("source_chunk_id", "null")
+        .execute()
+        .count
+        or 0
+    )
+    total_briefs = (
+        supabase.table("earnings_briefs")
+        .select("id", count="exact")
+        .execute()
+        .count
+        or 0
+    )
+
+    rows = []
+    total_extraction_ready = 0
+    for company in companies:
+        ticker = company["ticker"]
+        extraction_ready = (
+            supabase.table("filings")
+            .select("id", count="exact")
+            .eq("ticker", ticker)
+            .eq("exhibit_processing_status", "processed")
+            .not_.is_("earnings_release_document_id", "null")
+            .execute()
+            .count
+            or 0
+        )
+        total_extraction_ready += extraction_ready
+        latest_filing = (
+            supabase.table("filings")
+            .select("filing_date")
+            .eq("ticker", ticker)
+            .order("filing_date", desc=True)
+            .limit(1)
+            .execute()
+            .data
+        )
+        briefs = (
+            supabase.table("earnings_briefs")
+            .select("version_number")
+            .eq("ticker", ticker)
+            .order("version_number", desc=True)
+            .limit(1)
+            .execute()
+            .data
+        )
+        rows.append(
+            {
+                "ticker": ticker,
+                "company_name": company["company_name"],
+                "extraction_ready_count": extraction_ready,
+                "trusted_claim_count": _trusted_promoted_count(supabase, ticker),
+                "latest_brief_version": (
+                    briefs[0]["version_number"] if briefs else None
+                ),
+                "latest_filing_date": (
+                    latest_filing[0]["filing_date"] if latest_filing else None
+                ),
+            }
+        )
+
+    return {
+        "companies_count": len(companies),
+        "total_filings_count": total_filings,
+        "extraction_ready_count": total_extraction_ready,
+        "pending_grounded_claim_count": pending_grounded,
+        "trusted_claim_count": _trusted_promoted_count(supabase),
+        "stored_brief_count": total_briefs,
+        "companies": rows,
+    }
+
+
+@app.get("/admin/validate", dependencies=[Depends(require_admin_token)])
+def validate_admin_token() -> dict:
+    """Confirm the supplied X-Admin-Token is valid.
+
+    The only GET route that reads the admin token; the dashboard uses it to
+    verify a saved token without performing any mutation.
+    """
+    return {"status": "ok"}
 
 
 @app.get("/filings")

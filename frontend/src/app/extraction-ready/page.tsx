@@ -51,12 +51,14 @@ function FilingCard({
   notice,
   onExtract,
   onPromote,
+  onGenerateBrief,
 }: {
   filing: ExtractionReadyFiling;
   busy: boolean;
   notice: Notice | null;
   onExtract: (accessionNumber: string) => void;
   onPromote: (ticker: string, accessionNumber: string) => void;
+  onGenerateBrief: (ticker: string, accessionNumber: string) => void;
 }) {
   // The terminal lifecycle step: every grounded draft is reviewed (nothing
   // pending), so the Review Queue no longer shows this filing — promotion
@@ -64,6 +66,13 @@ function FilingCard({
   const needsTerminalPromotion =
     filing.claim_extraction_status === "pending_review" &&
     filing.pending_grounded_claim_count === 0;
+
+  // An approved filing with trusted claims but no stored brief can have its
+  // first version generated right here instead of through Swagger.
+  const needsFirstBrief =
+    filing.claim_extraction_status === "approved" &&
+    filing.trusted_promoted_claim_count > 0 &&
+    filing.latest_brief_version == null;
 
   return (
     <div className="rounded-md border border-edge bg-surface p-4">
@@ -166,6 +175,17 @@ function FilingCard({
             {busy ? "Working…" : "Promote reviewed claims"}
           </button>
         )}
+        {needsFirstBrief && (
+          <button
+            className="rounded border border-info/50 px-2.5 py-1 text-[12px] font-medium text-info transition-colors hover:bg-info/10 disabled:opacity-50"
+            disabled={busy}
+            onClick={() =>
+              onGenerateBrief(filing.ticker, filing.accession_number)
+            }
+          >
+            {busy ? "Working…" : "Generate first brief"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -251,6 +271,36 @@ export default function ExtractionReadyPage() {
     }
   }
 
+  async function handleGenerateBrief(ticker: string, accessionNumber: string) {
+    if (!getAdminToken()) {
+      setNotice(accessionNumber, {
+        kind: "error",
+        text: "Save your admin token in the Admin Access panel first — brief generation is a protected action.",
+      });
+      return;
+    }
+
+    setBusyAccession(accessionNumber);
+    try {
+      const result = await api.generateBrief(ticker, accessionNumber);
+      setNotice(accessionNumber, {
+        kind: "success",
+        text: `Brief v${result.version_number} generated and stored (${result.trusted_claim_count} trusted claims).`,
+      });
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      setNotice(accessionNumber, {
+        kind: "error",
+        text:
+          err instanceof ApiError
+            ? err.message
+            : "Brief generation failed unexpectedly. Please try again.",
+      });
+    } finally {
+      setBusyAccession(null);
+    }
+  }
+
   async function handlePromote(ticker: string, accessionNumber: string) {
     if (!getAdminToken()) {
       setNotice(accessionNumber, {
@@ -317,6 +367,7 @@ export default function ExtractionReadyPage() {
               notice={notices[filing.accession_number] ?? null}
               onExtract={handleExtract}
               onPromote={handlePromote}
+              onGenerateBrief={handleGenerateBrief}
             />
           ))}
         </div>

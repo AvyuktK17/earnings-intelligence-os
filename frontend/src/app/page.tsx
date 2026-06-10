@@ -1,24 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   api,
-  ApiError,
-  type Brief,
-  type ExtractionReadyResponse,
   type FilingsResponse,
-  type ReviewQueueResponse,
+  type OverviewResponse,
 } from "@/lib/api";
 import FilingsTable from "@/components/FilingsTable";
 import { ErrorBox, Loading, Panel, StatCard } from "@/components/Panel";
 
 export default function OverviewPage() {
+  const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [filings, setFilings] = useState<FilingsResponse | null>(null);
-  const [queue, setQueue] = useState<ReviewQueueResponse | null>(null);
-  const [extractionReady, setExtractionReady] =
-    useState<ExtractionReadyResponse | null>(null);
-  const [brief, setBrief] = useState<Brief | null>(null);
-  const [briefMissing, setBriefMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -27,35 +21,18 @@ export default function OverviewPage() {
 
     async function load() {
       try {
-        const [filingsData, queueData, extractionReadyData] =
-          await Promise.all([
-            api.getFilings({ limit: 25 }),
-            api.getReviewQueue(),
-            api.getExtractionReady(),
-          ]);
+        const [overviewData, filingsData] = await Promise.all([
+          api.getOverview(),
+          api.getFilings({ limit: 10 }),
+        ]);
         if (cancelled) return;
+        setOverview(overviewData);
         setFilings(filingsData);
-        setQueue(queueData);
-        setExtractionReady(extractionReadyData);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load data.");
         }
       }
-
-      // The brief may legitimately not exist yet — a 404 is not an error.
-      try {
-        const briefData = await api.getLatestBrief("AVGO");
-        if (!cancelled) setBrief(briefData);
-      } catch (err) {
-        if (cancelled) return;
-        if (err instanceof ApiError && err.status === 404) {
-          setBriefMissing(true);
-        } else {
-          setError(err instanceof Error ? err.message : "Failed to load brief.");
-        }
-      }
-
       if (!cancelled) setLoading(false);
     }
 
@@ -77,34 +54,113 @@ export default function OverviewPage() {
       {error && <ErrorBox message={error} />}
       {loading && !error && <Loading label="Loading overview…" />}
 
-      {!loading && filings && (
+      {!loading && overview && (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
             <StatCard
-              label="Recent filings"
-              value={filings.count}
-              hint="latest feed (limit 25)"
+              label="Companies"
+              value={overview.companies_count}
+              hint="monitored watchlist"
             />
             <StatCard
-              label="Extraction-ready filings"
-              value={extractionReady?.count ?? 0}
-              hint="exhibits ingested and chunked"
+              label="Filings tracked"
+              value={overview.total_filings_count}
+              hint="all forms, all time"
             />
             <StatCard
-              label="Pending grounded claims"
-              value={queue?.count ?? 0}
-              hint="awaiting analyst review"
+              label="Extraction ready"
+              value={overview.extraction_ready_count}
+              hint="earnings exhibits ingested"
             />
             <StatCard
-              label="Latest AVGO brief"
-              value={brief ? `v${brief.version_number}` : "—"}
-              hint={briefMissing ? "no brief stored yet" : "stored version"}
+              label="Pending review"
+              value={overview.pending_grounded_claim_count}
+              hint="grounded drafts awaiting analysts"
+            />
+            <StatCard
+              label="Trusted claims"
+              value={overview.trusted_claim_count}
+              hint="human-reviewed and promoted"
+            />
+            <StatCard
+              label="Stored briefs"
+              value={overview.stored_brief_count}
+              hint="versioned, evidence-linked"
             />
           </div>
 
-          <Panel title="Latest filings">
-            <FilingsTable filings={filings.filings} />
+          <Panel title="Company status">
+            <table className="w-full text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-edge text-[11px] uppercase tracking-wider text-muted">
+                  <th className="py-1.5 pr-3 font-medium">Ticker</th>
+                  <th className="py-1.5 pr-3 font-medium">Company</th>
+                  <th className="py-1.5 pr-3 font-medium text-right">
+                    Extraction ready
+                  </th>
+                  <th className="py-1.5 pr-3 font-medium text-right">
+                    Trusted claims
+                  </th>
+                  <th className="py-1.5 pr-3 font-medium">Latest brief</th>
+                  <th className="py-1.5 pr-3 font-medium">Latest filing</th>
+                  <th className="py-1.5 font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {overview.companies.map((row) => (
+                  <tr
+                    key={row.ticker}
+                    className="border-b border-edge/50 last:border-b-0 hover:bg-surface-raised"
+                  >
+                    <td className="py-1.5 pr-3 font-mono font-medium">
+                      <Link
+                        href={`/companies/${encodeURIComponent(row.ticker)}`}
+                        className="text-accent hover:underline"
+                      >
+                        {row.ticker}
+                      </Link>
+                    </td>
+                    <td className="py-1.5 pr-3">{row.company_name}</td>
+                    <td className="py-1.5 pr-3 text-right font-mono">
+                      {row.extraction_ready_count}
+                    </td>
+                    <td className="py-1.5 pr-3 text-right font-mono">
+                      {row.trusted_claim_count}
+                    </td>
+                    <td className="py-1.5 pr-3 font-mono">
+                      {row.latest_brief_version != null ? (
+                        <Link
+                          href={`/briefs/latest/${encodeURIComponent(row.ticker)}`}
+                          className="text-info hover:text-accent hover:underline"
+                        >
+                          v{row.latest_brief_version}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="py-1.5 pr-3 font-mono text-muted">
+                      {row.latest_filing_date ?? "—"}
+                    </td>
+                    <td className="py-1.5 text-right">
+                      <Link
+                        href={`/companies/${encodeURIComponent(row.ticker)}`}
+                        className="text-[12px] text-info hover:text-accent hover:underline"
+                      >
+                        company page →
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </Panel>
+
+          {filings && (
+            <Panel title="Latest filings">
+              <FilingsTable filings={filings.filings} />
+            </Panel>
+          )}
         </>
       )}
     </div>

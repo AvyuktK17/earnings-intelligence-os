@@ -149,9 +149,16 @@ export default function LatestBriefPage({
               No stored brief exists for {ticker} yet.
             </p>
             <p className="mt-1 text-[12px] text-faint">
-              Briefs are generated from promoted trusted claims. Review and
-              promote claims first, then generate a brief from a filing with
-              trusted coverage.
+              Briefs are generated from promoted trusted claims. Once a
+              filing for {ticker} is approved with trusted claims, generate
+              the first version from the{" "}
+              <Link
+                href="/extraction-ready"
+                className="text-info hover:underline"
+              >
+                Extraction Ready page
+              </Link>
+              .
             </p>
           </div>
         </Panel>

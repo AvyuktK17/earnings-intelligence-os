@@ -63,9 +63,14 @@ if the server itself has no `ADMIN_API_TOKEN` configured, write endpoints
 fail closed with a generic `500` (`Server configuration error.`). There are
 no user accounts yet.
 
-**Public (GET, no token):** `/health`, `/companies`, `/filings`,
-`/filings/{accession_number}`, `/briefs/latest/{ticker}`, `/review-queue`,
-`/extraction-ready`.
+**Public (GET, no token):** `/health`, `/companies`, `/companies/{ticker}`,
+`/overview`, `/filings`, `/filings/{accession_number}`,
+`/briefs/latest/{ticker}`, `/review-queue`, `/extraction-ready`.
+
+**Protected (GET, token required):** `/admin/validate` — returns
+`{"status": "ok"}` for a valid `X-Admin-Token`, 401 otherwise; the
+dashboard's Admin Access panel uses it to verify a saved token without
+performing any mutation.
 
 **Protected (POST, token required):** `/review-queue/{id}/approve`,
 `/review-queue/{id}/edit`, `/review-queue/{id}/reject`, `/claims/promote`,
@@ -73,7 +78,9 @@ no user accounts yet.
 
 In the dashboard, paste the token into the **Admin Access** panel at the
 bottom of the sidebar. It is kept in browser session storage only — never
-in committed files and never in a `NEXT_PUBLIC_` variable.
+in committed files and never in a `NEXT_PUBLIC_` variable. Saved tokens are
+verified against `/admin/validate` and the indicator shows `connected`,
+`invalid token`, or `not connected` accordingly.
 
 `POST /claims/promote` accepts an optional JSON body
 `{"ticker": "...", "accession_number": "..."}` to scope promotion to one
@@ -82,8 +89,13 @@ claim (the original global behavior). The dashboard always promotes scoped
 to a filing.
 
 `GET /companies` returns the monitored watchlist (ticker, company_name,
-cik, business_model) ordered by ticker; the dashboard's filings filter is
-populated from it.
+cik, business_model) ordered by ticker; the dashboard's filings filter,
+sidebar Companies section, and brief tabs are populated from it.
+
+`GET /companies/{ticker}` returns one company's research-pipeline summary:
+filing counts, extraction-ready filings, trusted-claim count, latest brief
+metadata, and recent filings. `GET /overview` returns cross-company totals
+plus a per-company status row for the dashboard's Overview page.
 
 `GET /extraction-ready` lists filings whose earnings-release exhibit has
 been ingested and chunked — the queue for the manual AI claim-extraction
@@ -143,6 +155,8 @@ python run_exhibit_processor.py  # ingest earnings-release exhibits (max 3)
 python list_filings.py           # list stored filings
 python review_claims.py          # interactive claim review
 python promote_claims.py         # promote reviewed claims
+python cleanup_legacy_claims.py  # list legacy ungrounded pending drafts
+                                 # (dry run; deletion needs --confirm)
 ```
 
 ## Frontend setup
@@ -161,10 +175,11 @@ only to the FastAPI service — never directly to Supabase.
 
 | Route | Purpose |
 |-------|---------|
-| `/` | Overview: summary cards + latest filings |
+| `/` | Cross-company overview: totals, per-company status table, latest filings |
+| `/companies/[ticker]` | Company research page: pipeline summary, extraction-ready filings, latest brief |
 | `/filings` | Filing feed with ticker/status/limit filters |
 | `/filings/[accessionNumber]` | Filing detail, documents, chunk count |
-| `/extraction-ready` | Exhibit queue with a lifecycle trail (not_started › pending_review › approved), Extract Claims, terminal Promote reviewed claims, and View latest brief links |
+| `/extraction-ready` | Exhibit queue with a lifecycle trail (not_started › pending_review › approved), Extract Claims, terminal Promote reviewed claims, first-brief generation, and View latest brief links |
 | `/review-queue` | Approve / edit / reject grounded pending claims; scoped promotion |
 | `/briefs/latest/[ticker]` | Latest stored brief with company tabs (from `/companies`), markdown rendering, and version generation |
 

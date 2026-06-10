@@ -1,7 +1,9 @@
 """Test the /briefs/latest/{ticker} endpoint.
 
 Uses FastAPI TestClient against live Supabase data. Read-only: no AI calls,
-no row mutations.
+no row mutations. Version-agnostic: analysts generate new brief versions in
+production, so the test asserts the endpoint returns the *latest* stored
+version rather than pinning exact version numbers.
 """
 
 import sys
@@ -12,14 +14,15 @@ sys.path.insert(0, os.path.dirname(__file__))
 from fastapi.testclient import TestClient
 
 from app.main import app
+from src.database import get_supabase_client
 
 TICKER_WITH_BRIEF = "AVGO"
-TICKER_WITHOUT_BRIEF = "NVDA"
-AVGO_ACCESSION = "0001730168-26-000051"
+TICKER_WITHOUT_BRIEF = "ZZZZ"  # never on the watchlist, never has briefs
 
 
 def main() -> None:
     client = TestClient(app)
+    supabase = get_supabase_client()
 
     # --- Latest AVGO brief ---
     response = client.get(f"/briefs/latest/{TICKER_WITH_BRIEF}")
@@ -32,18 +35,25 @@ def main() -> None:
     assert brief["ticker"] == TICKER_WITH_BRIEF, (
         f"Expected ticker={TICKER_WITH_BRIEF!r}, got {brief['ticker']!r}."
     )
-    assert brief["accession_number"] == AVGO_ACCESSION, (
-        f"Expected accession_number={AVGO_ACCESSION!r}, "
-        f"got {brief['accession_number']!r}."
-    )
-    assert brief["version_number"] == 1, (
-        f"Expected version_number=1, got {brief['version_number']}."
-    )
-    assert brief["trusted_claim_count"] == 5, (
-        f"Expected trusted_claim_count=5, got {brief['trusted_claim_count']}."
-    )
+    assert brief["version_number"] >= 1
+    assert brief["trusted_claim_count"] >= 1
     assert brief["markdown_content"], "markdown_content must not be empty."
     assert brief["storage_path"], "storage_path must not be empty."
+
+    # The endpoint must return the most recently generated stored brief.
+    newest = (
+        supabase.table("earnings_briefs")
+        .select("id, generated_at")
+        .eq("ticker", TICKER_WITH_BRIEF)
+        .order("generated_at", desc=True)
+        .limit(1)
+        .execute()
+        .data[0]
+    )
+    assert brief["id"] == newest["id"], (
+        f"Endpoint returned brief id={brief['id']}, but the newest stored "
+        f"brief is id={newest['id']}."
+    )
     print(
         f"GET /briefs/latest/{TICKER_WITH_BRIEF} -> 200, "
         f"version={brief['version_number']}, "
@@ -60,8 +70,8 @@ def main() -> None:
 
     print()
     print(
-        "PASS: latest-brief endpoint returns the stored AVGO v1 brief with the "
-        "expected claim counts and 404s for tickers without a persisted brief."
+        "PASS: latest-brief endpoint returns the most recent stored brief "
+        "and 404s for tickers without a persisted brief."
     )
 
 

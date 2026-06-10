@@ -146,6 +146,58 @@ export interface ExtractionReadyResponse {
   filings: ExtractionReadyFiling[];
 }
 
+export interface BriefMeta {
+  id: number;
+  ticker: string;
+  accession_number: string;
+  version_number: number;
+  storage_path: string;
+  trusted_claim_count: number;
+  factual_claim_count: number;
+  interpretive_claim_count: number;
+  generated_at: string;
+}
+
+export interface CompanyExtractionReadyRow {
+  accession_number: string;
+  form: string;
+  filing_date: string | null;
+  filename: string | null;
+  document_key: string | null;
+  chunk_count: number;
+  claim_extraction_status: string;
+}
+
+export interface CompanyDetail {
+  company: Company;
+  filings_count: number;
+  chunked_filings_count: number;
+  extraction_ready_count: number;
+  trusted_claim_count: number;
+  latest_brief: BriefMeta | null;
+  recent_filings: Filing[];
+  extraction_ready: CompanyExtractionReadyRow[];
+}
+
+export interface OverviewCompanyRow {
+  ticker: string;
+  company_name: string;
+  extraction_ready_count: number;
+  trusted_claim_count: number;
+  latest_brief_version: number | null;
+  latest_filing_date: string | null;
+}
+
+export interface OverviewResponse {
+  companies_count: number;
+  total_filings_count: number;
+  extraction_ready_count: number;
+  pending_grounded_claim_count: number;
+  trusted_claim_count: number;
+  stored_brief_count: number;
+  companies: OverviewCompanyRow[];
+}
+
 export interface ClaimExtractionResult {
   ticker: string;
   accession_number: string;
@@ -236,6 +288,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   getCompanies() {
     return request<CompaniesResponse>("/companies");
+  },
+
+  getCompany(ticker: string) {
+    return request<CompanyDetail>(
+      `/companies/${encodeURIComponent(ticker)}`,
+    );
+  },
+
+  getOverview() {
+    return request<OverviewResponse>("/overview");
+  },
+
+  /**
+   * The only GET that carries the admin token — used by the Admin Access
+   * panel to verify a saved token without performing any mutation.
+   */
+  validateAdminToken() {
+    const token = getAdminToken();
+    return request<{ status: string }>("/admin/validate", {
+      headers: token ? { "X-Admin-Token": token } : {},
+    });
   },
 
   getFilings(params?: { ticker?: string; status?: string; limit?: number }) {
