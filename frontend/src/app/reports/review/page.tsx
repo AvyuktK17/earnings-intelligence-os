@@ -1,24 +1,13 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
-import {
-  api,
-  ApiError,
-  getAdminToken,
-  subscribeAdminToken,
-  type ReportReviewItem,
-} from "@/lib/api";
-import { ErrorBox, Loading, Panel, SuccessNote } from "@/components/Panel";
-
-function useAdminToken() {
-  return useSyncExternalStore(
-    subscribeAdminToken,
-    () => getAdminToken(),
-    () => null,
-  );
-}
+import { api, ApiError, type ReportReviewItem } from "@/lib/api";
+import { ErrorBox, Panel, SuccessNote } from "@/components/Panel";
+import ResearchHeader from "@/components/ResearchHeader";
+import { EmptyState, LoadingSkeleton } from "@/components/States";
+import { useAdminToken } from "@/lib/hooks";
 
 type Mode = "idle" | "edit" | "reject";
 
@@ -313,42 +302,35 @@ export default function NarrativeReviewPage() {
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="text-lg font-semibold">Narrative Review</h1>
-        <p className="text-[12px] text-muted">
-          Claude-assisted narrative drafts awaiting analyst review. Drafts are
-          private until approved — they never appear on public report pages.
-        </p>
-      </header>
+      <ResearchHeader
+        eyebrow="Workflow"
+        title="Narrative Review"
+        description="Claude-assisted narrative drafts awaiting analyst review. Drafts are private until approved — they never appear on public report pages."
+      />
 
       {flash && <SuccessNote message={flash} />}
       {error && <ErrorBox message={error} />}
 
       {!adminToken && (
-        <Panel>
-          <div className="py-8 text-center">
-            <p className="text-[14px] text-muted">Admin token required.</p>
-            <p className="mt-1 text-[12px] text-faint">
-              Save an admin token in the sidebar to review imported narrative
-              drafts.
-            </p>
-          </div>
-        </Panel>
+        <EmptyState
+          title="Admin token required."
+          hint="Save an admin token in the sidebar to review imported narrative drafts."
+        />
       )}
 
-      {adminToken && loading && <Loading label="Loading review queue…" />}
+      {adminToken && loading && <LoadingSkeleton rows={6} withCards={false} />}
 
       {adminToken && drafts && drafts.length === 0 && !loading && (
-        <Panel>
-          <div className="py-8 text-center">
-            <p className="text-[14px] text-muted">No drafts awaiting review.</p>
-            <p className="mt-1 text-[12px] text-faint">
+        <EmptyState
+          title="No drafts awaiting review."
+          hint={
+            <>
               Import a Claude-assisted draft locally with{" "}
               <span className="font-mono">import_claude_narrative.py</span> to
               populate this queue.
-            </p>
-          </div>
-        </Panel>
+            </>
+          }
+        />
       )}
 
       {adminToken &&

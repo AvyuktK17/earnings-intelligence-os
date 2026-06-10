@@ -35,6 +35,53 @@ export function subscribeAdminToken(callback: () => void): () => void {
   return () => window.removeEventListener(ADMIN_TOKEN_CHANGE_EVENT, callback);
 }
 
+/**
+ * Cold-start tracking. The Render free tier sleeps the API after inactivity,
+ * so the first request of a session can take 30-60s while the dyno wakes. We
+ * surface a non-blocking notice when any request stays in flight past a short
+ * threshold instead of leaving the user staring at a spinner.
+ */
+const SLOW_REQUEST_MS = 3500;
+const SLOW_CHANGE_EVENT = "eios-slow-change";
+let inFlight = 0;
+let isSlow = false;
+let slowTimer: ReturnType<typeof setTimeout> | null = null;
+
+function emitSlow(next: boolean) {
+  if (next === isSlow) return;
+  isSlow = next;
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SLOW_CHANGE_EVENT));
+  }
+}
+
+function startRequest() {
+  inFlight += 1;
+  if (inFlight === 1 && slowTimer === null) {
+    slowTimer = setTimeout(() => emitSlow(true), SLOW_REQUEST_MS);
+  }
+}
+
+function endRequest() {
+  inFlight = Math.max(0, inFlight - 1);
+  if (inFlight === 0) {
+    if (slowTimer !== null) {
+      clearTimeout(slowTimer);
+      slowTimer = null;
+    }
+    emitSlow(false);
+  }
+}
+
+export function getApiIsSlow(): boolean {
+  return isSlow;
+}
+
+export function subscribeApiSlow(callback: () => void): () => void {
+  window.addEventListener(SLOW_CHANGE_EVENT, callback);
+  return () => window.removeEventListener(SLOW_CHANGE_EVENT, callback);
+}
+
 export interface Filing {
   id: number;
   ticker: string;
@@ -390,6 +437,7 @@ export interface ReportMeta {
   pdf_storage_path: string | null;
   generated_at: string;
   pdf_available?: boolean;
+  source_report_id?: number | null;
 }
 
 export interface ReportsResponse {
@@ -500,6 +548,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   let response: Response;
+  startRequest();
   try {
     response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
   } catch {
@@ -507,6 +556,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       0,
       `Cannot reach the API at ${API_BASE_URL}. Is the backend running?`,
     );
+  } finally {
+    endRequest();
   }
 
   if (!response.ok) {

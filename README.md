@@ -212,6 +212,16 @@ fail to install. Trade-off: fpdf2's core font is latin-1, so non-latin-1
 punctuation in SEC excerpts is transliterated for the PDF only — the stored
 Markdown and HTML keep full Unicode fidelity.
 
+The PDF is laid out **natively from the report's intermediate block model**
+(`render_report_pdf` in `src/research_report_storage.py`), not by re-parsing
+HTML. The `_ResearchPDF` subclass renders an institutional research note: a
+neutral branded running header (`Earnings Intelligence OS Research` + ticker /
+date), section hierarchy with rules, compact financial tables with a shaded
+header and zebra rows (label column left-aligned, figures right-aligned),
+evidence quotes, a source appendix, and a numbered footer carrying the standard
+deterministic-note disclaimer. No system dependencies are added, and there is no
+copied third-party branding or wording.
+
 ```bash
 python generate_research_report.py AVGO              # generate + store
 python generate_research_report.py AVGO --dry-run    # print markdown, no writes
@@ -422,16 +432,51 @@ npm run dev
 Open `http://localhost:3000` (start the backend first). The browser talks
 only to the FastAPI service — never directly to Supabase.
 
+### Design system (Bundle C1)
+
+The dashboard uses an institutional research-terminal aesthetic: a dense, dark
+theme with restrained accents, subtle borders, compact spacing, consistent
+metric formatting, and minimal animation. Shared design-system components live
+in `frontend/src/components/`:
+
+- `ResearchHeader` — page masthead (eyebrow / title / description / actions)
+- `MetricCard` — compact KPI cell with tabular figures and tone colors
+- `SectionHeader` — labelled section divider with count + actions
+- `StatusPill` — one canonical status→color mapping (filing / extraction /
+  report lifecycles); `StatusBadge` delegates to it
+- `DataTable` (+ `THead`/`TH`/`TR`/`TD`) — dense tables with responsive
+  horizontal overflow and a `minWidth` for wide financial tables
+- `EmptyState`, `LoadingSkeleton`, `ColdStartNotice` — honest loading/empty
+  states; the cold-start banner explains the Render free-tier wake-up delay
+- `SourceBadge`, `ReportTypeBadge` — prominent provenance and
+  deterministic-vs-Claude-assisted labelling
+- `TickerTabs` — shared per-company tab strip (reports + briefs)
+- `ChartPanel` — chart container with title, control slot, and caption
+
+Design tokens live in `globals.css` (surfaces, edges, status colors including
+`warning`, page max-width, skeleton shimmer, focus-visible outlines). Shared
+hooks (`src/lib/hooks.ts`) consolidate the companies list and admin-token reads.
+
+Navigation is grouped into **Markets** (Overview, Peer Comparison, Companies),
+**Research** (Evidence Explorer, Reports, Latest Brief), and **Workflow**
+(Filings, Extraction Ready, Review Queue, Narrative Review), with explicit
+active-state matching and a responsive sidebar that stacks on mobile. The admin
+token still lives only in browser session storage.
+
+Cold-start UX: a slow request (the Render dyno waking from sleep) raises a
+non-blocking banner via the API client's in-flight tracker, so the first call of
+a session no longer looks like a hang.
+
 ### Dashboard routes
 
 | Route | Purpose |
 |-------|---------|
 | `/` | Cross-company overview: totals, market leaders, peer-fundamentals table, per-company status, latest filings |
 | `/peers` | Peer-comparison terminal: ranked bar chart, full fundamentals + valuation table, comparability notes (charts via `recharts`) |
-| `/companies/[ticker]` | Company deep dive: KPI cards, revenue/margin/FCF/R&D/TTM trend charts, balance-sheet & valuation snapshot, plus pipeline summary, extraction-ready filings, latest brief |
-| `/evidence` | Evidence Explorer: filterable trusted claims with expandable exact source-chunk text and SEC links |
-| `/reports` | Research-report index: ticker/type filters, status/version, claim & metric counts, PDF links |
-| `/reports/latest/[ticker]` | Latest report: ticker tabs, rendered report, version selector, PDF download, evidence links, admin-only generate |
+| `/companies/[ticker]` | Company deep dive with **Overview / Financials / Filings / Evidence / Reports** tabs: KPI cards, trend charts, balance-sheet & valuation snapshot, trusted-claim summary, latest report/brief links, and the pipeline view |
+| `/evidence` | Evidence Explorer: ticker/theme/type/confidence filters + text search; compact cards with a prominent source-provenance row (`SourceBadge`) and expandable exact source-chunk text. Accepts a `?ticker=` deep link |
+| `/reports` | Research-report index: ticker/type filters, report-type badges (deterministic vs Claude-assisted), status/version, claim & metric counts, PDF links |
+| `/reports/latest/[ticker]` | Latest report: ticker tabs, report-type/status badges, source-report lineage, rendered report, version selector, PDF download (shown only when a PDF exists), evidence links, admin-only generate |
 | `/filings` | Filing feed with ticker/status/limit filters |
 | `/filings/[accessionNumber]` | Filing detail, documents, chunk count |
 | `/extraction-ready` | Exhibit queue with a lifecycle trail (not_started › pending_review › approved), Extract Claims, terminal Promote reviewed claims, first-brief generation, and View latest brief links |
@@ -514,4 +559,18 @@ is ever made.
   approve / edit-and-approve / reject controls plus a Narrative Review page.
   Claude generation stays manual and local; the backend never calls the Claude
   API or Gemini, and drafts are never published until approved.
-- **Bundle C — institutional UI redesign and final QA (next).**
+- **Bundle C1 — institutional UI redesign and report-layout polish
+  (complete):** a shared design-system component library (`ResearchHeader`,
+  `MetricCard`, `SectionHeader`, `StatusPill`, `DataTable`, `EmptyState`,
+  `LoadingSkeleton`, `ColdStartNotice`, `SourceBadge`, `ReportTypeBadge`,
+  `TickerTabs`, `ChartPanel`) with consolidated design tokens; grouped
+  Markets / Research / Workflow navigation; redesigned Overview, Peer
+  Comparison (sortable table), tabbed company deep dives, Evidence Explorer
+  (prominent provenance), Reports, and workflow pages; loading skeletons,
+  empty states, a Render cold-start notice, responsive table overflow, and a
+  mobile sidebar fallback; and an institutional, block-rendered deterministic
+  PDF (branded header, page numbers, shaded financial tables, source appendix,
+  disclaimer footer) with no new system dependencies. No backend logic, API
+  contracts, secrets, data, or LLM usage changed.
+- **Bundle C (remaining) — final QA:** portfolio screenshots and demo video
+  (deferred), plus end-to-end production verification.

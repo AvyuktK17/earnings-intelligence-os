@@ -8,16 +8,20 @@ import {
   type OverviewResponse,
   type PeerRow,
   type PeersResponse,
+  type ReportMeta,
+  type ExtractionReadyResponse,
 } from "@/lib/api";
 import FilingsTable from "@/components/FilingsTable";
-import { ErrorBox, Loading, Panel, StatCard } from "@/components/Panel";
+import { ErrorBox, Panel } from "@/components/Panel";
+import ResearchHeader from "@/components/ResearchHeader";
+import MetricCard from "@/components/MetricCard";
+import { DataTable, TH, THead, TR, TD } from "@/components/DataTable";
+import { EmptyState, LoadingSkeleton } from "@/components/States";
+import StatusPill from "@/components/StatusPill";
 import { ValuationBadge } from "@/components/ValuationNote";
 import { formatMultiple, formatPercent, formatUSD } from "@/lib/format";
 
-function leader(
-  peers: PeerRow[],
-  key: keyof PeerRow,
-): PeerRow | null {
+function leader(peers: PeerRow[], key: keyof PeerRow): PeerRow | null {
   const ranked = peers
     .filter((p) => p[key] != null)
     .sort((a, b) => (b[key] as number) - (a[key] as number));
@@ -28,6 +32,8 @@ export default function OverviewPage() {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [filings, setFilings] = useState<FilingsResponse | null>(null);
   const [peers, setPeers] = useState<PeersResponse | null>(null);
+  const [reports, setReports] = useState<ReportMeta[] | null>(null);
+  const [ready, setReady] = useState<ExtractionReadyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -38,7 +44,7 @@ export default function OverviewPage() {
       try {
         const [overviewData, filingsData] = await Promise.all([
           api.getOverview(),
-          api.getFilings({ limit: 10 }),
+          api.getFilings({ limit: 8 }),
         ]);
         if (cancelled) return;
         setOverview(overviewData);
@@ -48,14 +54,19 @@ export default function OverviewPage() {
           setError(err instanceof Error ? err.message : "Failed to load data.");
         }
       }
-      // Peer fundamentals are additive; never block the pipeline overview.
-      try {
-        const peersData = await api.getPeers();
-        if (!cancelled) setPeers(peersData);
-      } catch {
-        /* leave the peer panels out if the endpoint is unavailable */
+      // Additive panels never block the core overview.
+      const [peersRes, reportsRes, readyRes] = await Promise.allSettled([
+        api.getPeers(),
+        api.getReports(),
+        api.getExtractionReady(),
+      ]);
+      if (!cancelled) {
+        if (peersRes.status === "fulfilled") setPeers(peersRes.value);
+        if (reportsRes.status === "fulfilled")
+          setReports(reportsRes.value.reports);
+        if (readyRes.status === "fulfilled") setReady(readyRes.value);
+        setLoading(false);
       }
-      if (!cancelled) setLoading(false);
     }
 
     load();
@@ -77,217 +88,427 @@ export default function OverviewPage() {
     [peers],
   );
 
+  // Report coverage grouped by ticker (latest version per company).
+  const reportCoverage = useMemo(() => {
+    if (!reports) return [];
+    const byTicker = new Map<string, { count: number; latest: number }>();
+    for (const r of reports) {
+      const cur = byTicker.get(r.ticker) ?? { count: 0, latest: 0 };
+      cur.count += 1;
+      cur.latest = Math.max(cur.latest, r.version_number);
+      byTicker.set(r.ticker, cur);
+    }
+    return [...byTicker.entries()]
+      .map(([ticker, v]) => ({ ticker, ...v }))
+      .sort((a, b) => a.ticker.localeCompare(b.ticker));
+  }, [reports]);
+
+  const pendingExtractions = useMemo(
+    () =>
+      (ready?.filings ?? []).filter(
+        (f) => f.claim_extraction_status === "not_started",
+      ),
+    [ready],
+  );
+
+  const snapshotDate = peers?.valuation_snapshot_dates?.[0] ?? null;
+
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="text-lg font-semibold">Earnings Intelligence OS</h1>
-        <p className="text-[12px] uppercase tracking-wider text-muted">
-          Semiconductor Research Terminal
-        </p>
-      </header>
+      <ResearchHeader
+        eyebrow="Markets"
+        title="Research Terminal Overview"
+        description="Cross-company state of the semiconductor coverage pipeline — from SEC ingestion through human-reviewed claims, briefs, and research reports."
+        actions={<ValuationBadge date={snapshotDate} />}
+      />
 
       {error && <ErrorBox message={error} />}
-      {loading && !error && <Loading label="Loading overview…" />}
+      {loading && !error && <LoadingSkeleton rows={6} />}
 
       {!loading && overview && (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
-            <StatCard
+          {/* --- System stats --------------------------------------------- */}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+            <MetricCard
               label="Companies"
               value={overview.companies_count}
               hint="monitored watchlist"
             />
-            <StatCard
-              label="Filings tracked"
+            <MetricCard
+              label="Filings"
               value={overview.total_filings_count}
               hint="all forms, all time"
             />
-            <StatCard
+            <MetricCard
               label="Extraction ready"
               value={overview.extraction_ready_count}
-              hint="earnings exhibits ingested"
+              hint="exhibits ingested"
+              tone="info"
             />
-            <StatCard
+            <MetricCard
               label="Pending review"
               value={overview.pending_grounded_claim_count}
-              hint="grounded drafts awaiting analysts"
+              hint="grounded drafts"
+              tone={
+                overview.pending_grounded_claim_count > 0 ? "accent" : "default"
+              }
             />
-            <StatCard
+            <MetricCard
               label="Trusted claims"
               value={overview.trusted_claim_count}
-              hint="human-reviewed and promoted"
+              hint="reviewed + promoted"
+              tone="positive"
             />
-            <StatCard
+            <MetricCard
               label="Stored briefs"
               value={overview.stored_brief_count}
-              hint="versioned, evidence-linked"
+              hint="versioned"
             />
           </div>
 
+          {/* --- Peer leaders --------------------------------------------- */}
           {peers && (
-            <>
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                <StatCard
-                  label="Top revenue growth"
-                  value={topGrowth ? topGrowth.ticker : "—"}
-                  hint={
-                    topGrowth
-                      ? `${formatPercent(topGrowth.yoy_revenue_growth)} YoY`
-                      : undefined
-                  }
-                />
-                <StatCard
-                  label="Highest gross margin"
-                  value={topGross ? topGross.ticker : "—"}
-                  hint={
-                    topGross
-                      ? `${formatPercent(topGross.gross_margin)} gross`
-                      : undefined
-                  }
-                />
-                <StatCard
-                  label="Strongest FCF margin"
-                  value={topFcf ? topFcf.ticker : "—"}
-                  hint={
-                    topFcf
-                      ? `${formatPercent(topFcf.free_cash_flow_margin)} FCF margin`
-                      : undefined
-                  }
-                />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <MetricCard
+                label="Top revenue growth"
+                value={topGrowth?.ticker ?? "—"}
+                hint={
+                  topGrowth
+                    ? `${formatPercent(topGrowth.yoy_revenue_growth)} YoY`
+                    : undefined
+                }
+                tone="positive"
+              />
+              <MetricCard
+                label="Highest gross margin"
+                value={topGross?.ticker ?? "—"}
+                hint={
+                  topGross ? `${formatPercent(topGross.gross_margin)} gross` : undefined
+                }
+                tone="accent"
+              />
+              <MetricCard
+                label="Strongest FCF margin"
+                value={topFcf?.ticker ?? "—"}
+                hint={
+                  topFcf
+                    ? `${formatPercent(topFcf.free_cash_flow_margin)} FCF margin`
+                    : undefined
+                }
+                tone="info"
+              />
+            </div>
+          )}
+
+          {/* --- Coverage + workflow health ------------------------------- */}
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Panel
+              title="Company coverage"
+              actions={
+                <Link
+                  href="/peers"
+                  className="text-[12px] text-info hover:text-accent hover:underline"
+                >
+                  Peer comparison →
+                </Link>
+              }
+            >
+              <div className="lg:col-span-2">
+                <DataTable minWidth={520}>
+                  <THead>
+                    <TH>Ticker</TH>
+                    <TH>Company</TH>
+                    <TH right>Ready</TH>
+                    <TH right>Trusted</TH>
+                    <TH>Brief</TH>
+                    <TH>Latest filing</TH>
+                  </THead>
+                  <tbody>
+                    {overview.companies.map((row) => (
+                      <TR key={row.ticker}>
+                        <TD mono className="font-medium">
+                          <Link
+                            href={`/companies/${encodeURIComponent(row.ticker)}`}
+                            className="text-accent hover:underline"
+                          >
+                            {row.ticker}
+                          </Link>
+                        </TD>
+                        <TD tone="muted">{row.company_name}</TD>
+                        <TD right mono>
+                          {row.extraction_ready_count}
+                        </TD>
+                        <TD right mono>
+                          {row.trusted_claim_count}
+                        </TD>
+                        <TD mono>
+                          {row.latest_brief_version != null ? (
+                            <Link
+                              href={`/briefs/latest/${encodeURIComponent(row.ticker)}`}
+                              className="text-info hover:text-accent hover:underline"
+                            >
+                              v{row.latest_brief_version}
+                            </Link>
+                          ) : (
+                            "—"
+                          )}
+                        </TD>
+                        <TD mono tone="muted">
+                          {row.latest_filing_date ?? "—"}
+                        </TD>
+                      </TR>
+                    ))}
+                  </tbody>
+                </DataTable>
               </div>
+            </Panel>
+
+            <div className="space-y-4">
+              <Panel title="Workflow health">
+                <dl className="space-y-2 text-[13px]">
+                  <HealthRow
+                    label="Exhibits awaiting extraction"
+                    value={pendingExtractions.length}
+                    href="/extraction-ready"
+                  />
+                  <HealthRow
+                    label="Grounded drafts in review"
+                    value={overview.pending_grounded_claim_count}
+                    href="/review-queue"
+                    tone={
+                      overview.pending_grounded_claim_count > 0
+                        ? "accent"
+                        : undefined
+                    }
+                  />
+                  <HealthRow
+                    label="Trusted promoted claims"
+                    value={overview.trusted_claim_count}
+                    href="/evidence"
+                  />
+                  <HealthRow
+                    label="Stored briefs"
+                    value={overview.stored_brief_count}
+                  />
+                </dl>
+              </Panel>
 
               <Panel
-                title="Peer fundamentals"
+                title="Report coverage"
                 actions={
-                  <div className="flex items-center gap-3">
-                    <ValuationBadge
-                      date={peers.valuation_snapshot_dates?.[0] ?? null}
-                    />
-                    <Link
-                      href="/peers"
-                      className="text-[12px] text-info hover:text-accent hover:underline"
-                    >
-                      Full peer comparison →
-                    </Link>
-                  </div>
+                  <Link
+                    href="/reports"
+                    className="text-[12px] text-info hover:text-accent hover:underline"
+                  >
+                    All reports →
+                  </Link>
                 }
               >
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[680px] text-left text-[13px]">
-                    <thead>
-                      <tr className="border-b border-edge text-[11px] uppercase tracking-wider text-muted">
-                        <th className="py-1.5 pr-3 font-medium">Ticker</th>
-                        <th className="py-1.5 pr-3 font-medium text-right">Revenue</th>
-                        <th className="py-1.5 pr-3 font-medium text-right">YoY</th>
-                        <th className="py-1.5 pr-3 font-medium text-right">Gross</th>
-                        <th className="py-1.5 pr-3 font-medium text-right">Op.</th>
-                        <th className="py-1.5 pr-3 font-medium text-right">EV/Rev</th>
-                        <th className="py-1.5 font-medium text-right">FCF yld</th>
-                      </tr>
-                    </thead>
+                {reportCoverage.length === 0 ? (
+                  <p className="py-2 text-[12px] text-muted">
+                    No research reports generated yet.
+                  </p>
+                ) : (
+                  <DataTable>
+                    <THead>
+                      <TH>Ticker</TH>
+                      <TH right>Versions</TH>
+                      <TH right>Latest</TH>
+                    </THead>
                     <tbody>
-                      {peers.peers.map((row) => (
-                        <tr
-                          key={row.ticker}
-                          className="border-b border-edge/50 last:border-b-0 hover:bg-surface-raised"
-                        >
-                          <td className="py-1.5 pr-3 font-mono font-medium">
+                      {reportCoverage.map((r) => (
+                        <TR key={r.ticker}>
+                          <TD mono className="font-medium">
                             <Link
-                              href={`/companies/${encodeURIComponent(row.ticker)}`}
+                              href={`/reports/latest/${encodeURIComponent(r.ticker)}`}
                               className="text-accent hover:underline"
                             >
-                              {row.ticker}
+                              {r.ticker}
                             </Link>
-                          </td>
-                          <td className="py-1.5 pr-3 text-right font-mono">{formatUSD(row.revenue)}</td>
-                          <td className="py-1.5 pr-3 text-right font-mono">{formatPercent(row.yoy_revenue_growth)}</td>
-                          <td className="py-1.5 pr-3 text-right font-mono">{formatPercent(row.gross_margin)}</td>
-                          <td className="py-1.5 pr-3 text-right font-mono">{formatPercent(row.operating_margin)}</td>
-                          <td className="py-1.5 pr-3 text-right font-mono text-accent">{formatMultiple(row.ev_to_ttm_revenue)}</td>
-                          <td className="py-1.5 text-right font-mono">{formatPercent(row.free_cash_flow_yield)}</td>
-                        </tr>
+                          </TD>
+                          <TD right mono>
+                            {r.count}
+                          </TD>
+                          <TD right mono tone="info">
+                            v{r.latest}
+                          </TD>
+                        </TR>
                       ))}
                     </tbody>
-                  </table>
-                </div>
+                  </DataTable>
+                )}
               </Panel>
-            </>
-          )}
+            </div>
+          </div>
 
-          <Panel title="Company status">
-            <table className="w-full text-left text-[13px]">
-              <thead>
-                <tr className="border-b border-edge text-[11px] uppercase tracking-wider text-muted">
-                  <th className="py-1.5 pr-3 font-medium">Ticker</th>
-                  <th className="py-1.5 pr-3 font-medium">Company</th>
-                  <th className="py-1.5 pr-3 font-medium text-right">
-                    Extraction ready
-                  </th>
-                  <th className="py-1.5 pr-3 font-medium text-right">
-                    Trusted claims
-                  </th>
-                  <th className="py-1.5 pr-3 font-medium">Latest brief</th>
-                  <th className="py-1.5 pr-3 font-medium">Latest filing</th>
-                  <th className="py-1.5 font-medium" />
-                </tr>
-              </thead>
-              <tbody>
-                {overview.companies.map((row) => (
-                  <tr
-                    key={row.ticker}
-                    className="border-b border-edge/50 last:border-b-0 hover:bg-surface-raised"
-                  >
-                    <td className="py-1.5 pr-3 font-mono font-medium">
-                      <Link
-                        href={`/companies/${encodeURIComponent(row.ticker)}`}
-                        className="text-accent hover:underline"
-                      >
-                        {row.ticker}
-                      </Link>
-                    </td>
-                    <td className="py-1.5 pr-3">{row.company_name}</td>
-                    <td className="py-1.5 pr-3 text-right font-mono">
-                      {row.extraction_ready_count}
-                    </td>
-                    <td className="py-1.5 pr-3 text-right font-mono">
-                      {row.trusted_claim_count}
-                    </td>
-                    <td className="py-1.5 pr-3 font-mono">
-                      {row.latest_brief_version != null ? (
+          {/* --- Peer fundamentals ---------------------------------------- */}
+          {peers && (
+            <Panel
+              title="Peer fundamentals — latest reported quarter"
+              actions={
+                <Link
+                  href="/peers"
+                  className="text-[12px] text-info hover:text-accent hover:underline"
+                >
+                  Full comparison →
+                </Link>
+              }
+            >
+              <DataTable minWidth={680}>
+                <THead>
+                  <TH>Ticker</TH>
+                  <TH right>Revenue</TH>
+                  <TH right>YoY</TH>
+                  <TH right>Gross</TH>
+                  <TH right>Op.</TH>
+                  <TH right>EV/Rev</TH>
+                  <TH right>FCF yld</TH>
+                </THead>
+                <tbody>
+                  {peers.peers.map((row) => (
+                    <TR key={row.ticker}>
+                      <TD mono className="font-medium">
                         <Link
-                          href={`/briefs/latest/${encodeURIComponent(row.ticker)}`}
-                          className="text-info hover:text-accent hover:underline"
+                          href={`/companies/${encodeURIComponent(row.ticker)}`}
+                          className="text-accent hover:underline"
                         >
-                          v{row.latest_brief_version}
+                          {row.ticker}
                         </Link>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="py-1.5 pr-3 font-mono text-muted">
-                      {row.latest_filing_date ?? "—"}
-                    </td>
-                    <td className="py-1.5 text-right">
-                      <Link
-                        href={`/companies/${encodeURIComponent(row.ticker)}`}
-                        className="text-[12px] text-info hover:text-accent hover:underline"
-                      >
-                        company page →
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Panel>
-
-          {filings && (
-            <Panel title="Latest filings">
-              <FilingsTable filings={filings.filings} />
+                      </TD>
+                      <TD right mono>
+                        {formatUSD(row.revenue)}
+                      </TD>
+                      <TD right mono>
+                        {formatPercent(row.yoy_revenue_growth)}
+                      </TD>
+                      <TD right mono>
+                        {formatPercent(row.gross_margin)}
+                      </TD>
+                      <TD right mono>
+                        {formatPercent(row.operating_margin)}
+                      </TD>
+                      <TD right mono tone="accent">
+                        {formatMultiple(row.ev_to_ttm_revenue)}
+                      </TD>
+                      <TD right mono>
+                        {formatPercent(row.free_cash_flow_yield)}
+                      </TD>
+                    </TR>
+                  ))}
+                </tbody>
+              </DataTable>
             </Panel>
           )}
+
+          {/* --- Operational panels --------------------------------------- */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Panel
+              title="Recent filings"
+              actions={
+                <Link
+                  href="/filings"
+                  className="text-[12px] text-info hover:text-accent hover:underline"
+                >
+                  All filings →
+                </Link>
+              }
+            >
+              {filings ? (
+                <FilingsTable filings={filings.filings} />
+              ) : (
+                <p className="py-3 text-[12px] text-muted">
+                  Filing feed unavailable.
+                </p>
+              )}
+            </Panel>
+
+            <Panel
+              title="Extraction queue"
+              actions={
+                <Link
+                  href="/extraction-ready"
+                  className="text-[12px] text-info hover:text-accent hover:underline"
+                >
+                  Open queue →
+                </Link>
+              }
+            >
+              {ready && ready.filings.length > 0 ? (
+                <DataTable minWidth={420}>
+                  <THead>
+                    <TH>Ticker</TH>
+                    <TH>Accession</TH>
+                    <TH right>Chunks</TH>
+                    <TH>Stage</TH>
+                  </THead>
+                  <tbody>
+                    {ready.filings.slice(0, 8).map((f) => (
+                      <TR key={f.filing_id}>
+                        <TD mono className="font-medium text-accent">
+                          {f.ticker}
+                        </TD>
+                        <TD mono>
+                          <Link
+                            href={`/filings/${encodeURIComponent(f.accession_number)}`}
+                            className="text-info hover:underline"
+                          >
+                            {f.accession_number}
+                          </Link>
+                        </TD>
+                        <TD right mono>
+                          {f.chunk_count}
+                        </TD>
+                        <TD>
+                          <StatusPill status={f.claim_extraction_status} />
+                        </TD>
+                      </TR>
+                    ))}
+                  </tbody>
+                </DataTable>
+              ) : (
+                <EmptyState
+                  title="No extraction-ready exhibits."
+                  hint="The exhibit worker marks new 8-K earnings releases here automatically."
+                />
+              )}
+            </Panel>
+          </div>
         </>
       )}
+    </div>
+  );
+}
+
+function HealthRow({
+  label,
+  value,
+  href,
+  tone,
+}: {
+  label: string;
+  value: number;
+  href?: string;
+  tone?: "accent";
+}) {
+  const valueEl = (
+    <span
+      className={`font-mono tabular-nums ${tone === "accent" ? "text-accent" : "text-foreground"}`}
+    >
+      {value}
+    </span>
+  );
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-edge/40 pb-2 last:border-b-0 last:pb-0">
+      <dt className="text-muted">
+        {href ? (
+          <Link href={href} className="hover:text-foreground hover:underline">
+            {label}
+          </Link>
+        ) : (
+          label
+        )}
+      </dt>
+      <dd>{valueEl}</dd>
     </div>
   );
 }

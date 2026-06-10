@@ -414,8 +414,12 @@ def generate_research_report(
         "report_status": REPORT_STATUS,
         "generator_type": GENERATOR_TYPE,
         "title": title,
+        "report_date": report_date,
         "markdown": markdown,
         "html": html,
+        # Intermediate block model — consumed by the institutional PDF renderer
+        # so the PDF is laid out natively instead of parsed back out of HTML.
+        "blocks": blocks,
         "valuation_snapshot_date": snapshot_date,
         "source_claim_count": len(claims),
         "source_metric_count": len(series),

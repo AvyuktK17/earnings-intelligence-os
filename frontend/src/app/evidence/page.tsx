@@ -1,16 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   api,
-  type Company,
   type EvidenceDetail,
   type EvidenceItem,
 } from "@/lib/api";
 import { ErrorBox, Loading, Panel } from "@/components/Panel";
+import ResearchHeader from "@/components/ResearchHeader";
+import SectionHeader from "@/components/SectionHeader";
+import { SourceBadge } from "@/components/Badges";
+import { EmptyState, LoadingSkeleton } from "@/components/States";
+import { useCompanies } from "@/lib/hooks";
 
 const CLAIM_TYPES = ["", "factual", "interpretive"];
 const CONFIDENCES = ["", "high", "medium", "low"];
+
+const selectClass =
+  "rounded border border-edge bg-surface-raised px-2 py-1 text-[12px] text-foreground focus:border-accent focus:outline-none";
 
 function ClassBadge({ value }: { value: string | null }) {
   if (!value) return null;
@@ -19,7 +27,9 @@ function ClassBadge({ value }: { value: string | null }) {
       ? "text-info border-info/40"
       : "text-accent border-accent/40";
   return (
-    <span className={`inline-block rounded border px-1.5 py-px font-mono text-[11px] leading-4 ${style}`}>
+    <span
+      className={`inline-block rounded border px-1.5 py-px font-mono text-[11px] leading-4 ${style}`}
+    >
       {value}
     </span>
   );
@@ -72,33 +82,34 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
       <div className="px-3 py-2.5">
         <p className="text-[13.5px] text-foreground">{item.claim}</p>
         {item.supporting_excerpt && (
-          <blockquote className="mt-2 border-l-2 border-edge pl-2.5 text-[12.5px] text-muted">
-            {item.supporting_excerpt.length > 220 && !open
-              ? `${item.supporting_excerpt.slice(0, 220)}…`
+          <blockquote className="mt-2 border-l-2 border-accent/40 pl-2.5 text-[12.5px] italic text-muted">
+            {item.supporting_excerpt.length > 240 && !open
+              ? `${item.supporting_excerpt.slice(0, 240)}…`
               : item.supporting_excerpt}
           </blockquote>
         )}
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-faint">
-          <span>{item.accession_number ?? "—"}</span>
-          <span>{item.document_key ?? "—"}</span>
-          <span>chunk {item.source_chunk_id ?? "—"}</span>
-          {item.filing_date && <span>filed {item.filing_date}</span>}
-          {item.sec_url && (
-            <a
-              href={item.sec_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-info hover:text-accent hover:underline"
+
+        {/* Provenance is made visually prominent on its own row. */}
+        <div className="mt-2.5 rounded border border-edge/70 bg-surface-raised px-2.5 py-1.5">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-faint">
+            Source provenance
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SourceBadge
+              accession={item.accession_number}
+              documentKey={item.document_key}
+              chunkId={item.source_chunk_id}
+              secUrl={item.sec_url}
+              filingDate={item.filing_date}
+            />
+            <button
+              onClick={toggle}
+              className="ml-auto whitespace-nowrap rounded border border-edge px-1.5 py-px text-[11px] text-info transition-colors hover:bg-info/10"
+              aria-expanded={open}
             >
-              SEC source ↗
-            </a>
-          )}
-          <button
-            onClick={toggle}
-            className="text-info hover:text-accent hover:underline"
-          >
-            {open ? "Hide source text" : "Show full source text"}
-          </button>
+              {open ? "Hide source text" : "Show source chunk"}
+            </button>
+          </div>
         </div>
 
         {open && (
@@ -128,20 +139,18 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
   );
 }
 
-export default function EvidenceExplorerPage() {
-  const [companies, setCompanies] = useState<Company[]>([]);
+function EvidenceExplorer() {
+  const searchParams = useSearchParams();
+  const companies = useCompanies();
   const [items, setItems] = useState<EvidenceItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [ticker, setTicker] = useState("");
+  const [ticker, setTicker] = useState(searchParams.get("ticker") ?? "");
+  const [theme, setTheme] = useState("");
   const [claimType, setClaimType] = useState("");
   const [confidence, setConfidence] = useState("");
   const [text, setText] = useState("");
-
-  useEffect(() => {
-    api.getCompanies().then((r) => setCompanies(r.companies)).catch(() => {});
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,6 +160,7 @@ export default function EvidenceExplorerPage() {
       try {
         const r = await api.getEvidence({
           ticker: ticker || undefined,
+          theme: theme || undefined,
           claim_type: claimType || undefined,
           confidence: confidence || undefined,
           limit: 200,
@@ -167,7 +177,14 @@ export default function EvidenceExplorerPage() {
     return () => {
       cancelled = true;
     };
-  }, [ticker, claimType, confidence]);
+  }, [ticker, theme, claimType, confidence]);
+
+  // Theme options derived from whatever is currently loaded.
+  const themes = useMemo(() => {
+    const set = new Set<string>();
+    for (const i of items ?? []) if (i.theme) set.add(i.theme);
+    return [...set].sort();
+  }, [items]);
 
   const filtered = useMemo(() => {
     if (!items) return [];
@@ -183,19 +200,19 @@ export default function EvidenceExplorerPage() {
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="text-lg font-semibold">Evidence Explorer</h1>
-        <p className="text-[12px] uppercase tracking-wider text-muted">
-          Trusted, human-reviewed claims linked to SEC filing evidence
-        </p>
-      </header>
+      <ResearchHeader
+        eyebrow="Research"
+        title="Evidence Explorer"
+        description="Trusted, human-reviewed claims linked to the exact SEC filing chunk they were grounded in. Pending, rejected, and ungrounded drafts never appear here."
+      />
 
       <Panel title="Filters">
-        <div className="flex flex-wrap items-center gap-2 text-[12px]">
+        <div className="flex flex-wrap items-center gap-2">
           <select
+            aria-label="Ticker"
             value={ticker}
             onChange={(e) => setTicker(e.target.value)}
-            className="rounded border border-edge bg-surface-raised px-2 py-1 text-foreground"
+            className={selectClass}
           >
             <option value="">All tickers</option>
             {companies.map((c) => (
@@ -205,9 +222,23 @@ export default function EvidenceExplorerPage() {
             ))}
           </select>
           <select
+            aria-label="Theme"
+            value={theme}
+            onChange={(e) => setTheme(e.target.value)}
+            className={selectClass}
+          >
+            <option value="">All themes</option>
+            {themes.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Claim type"
             value={claimType}
             onChange={(e) => setClaimType(e.target.value)}
-            className="rounded border border-edge bg-surface-raised px-2 py-1 text-foreground"
+            className={selectClass}
           >
             {CLAIM_TYPES.map((t) => (
               <option key={t} value={t}>
@@ -216,9 +247,10 @@ export default function EvidenceExplorerPage() {
             ))}
           </select>
           <select
+            aria-label="Confidence"
             value={confidence}
             onChange={(e) => setConfidence(e.target.value)}
-            className="rounded border border-edge bg-surface-raised px-2 py-1 text-foreground"
+            className={selectClass}
           >
             {CONFIDENCES.map((t) => (
               <option key={t} value={t}>
@@ -229,27 +261,27 @@ export default function EvidenceExplorerPage() {
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Search claim text or theme…"
-            className="min-w-[220px] flex-1 rounded border border-edge bg-surface-raised px-2 py-1 text-foreground placeholder:text-faint"
+            placeholder="Search claim text, theme, or excerpt…"
+            aria-label="Search"
+            className="min-w-[220px] flex-1 rounded border border-edge bg-surface-raised px-2 py-1 text-[12px] text-foreground placeholder:text-faint focus:border-accent focus:outline-none"
           />
         </div>
       </Panel>
 
       {error && <ErrorBox message={error} />}
-      {loading && !error && <Loading label="Loading evidence…" />}
+      {loading && !error && <LoadingSkeleton rows={5} withCards={false} />}
 
       {items && !loading && (
         <>
-          <p className="text-[12px] text-faint">
-            {filtered.length} trusted claim{filtered.length === 1 ? "" : "s"}
-            {text && ` matching “${text}”`}
-          </p>
+          <SectionHeader
+            label={text ? `Matching “${text}”` : "Trusted evidence"}
+            count={filtered.length}
+          />
           {filtered.length === 0 ? (
-            <Panel>
-              <div className="py-8 text-center text-[13px] text-muted">
-                No trusted evidence matches these filters.
-              </div>
-            </Panel>
+            <EmptyState
+              title="No trusted evidence matches these filters."
+              hint="Clear a filter, or extract → review → promote claims to populate the evidence layer."
+            />
           ) : (
             <div className="space-y-3">
               {filtered.map((item) => (
@@ -260,5 +292,13 @@ export default function EvidenceExplorerPage() {
         </>
       )}
     </div>
+  );
+}
+
+export default function EvidenceExplorerPage() {
+  return (
+    <Suspense fallback={<LoadingSkeleton rows={5} />}>
+      <EvidenceExplorer />
+    </Suspense>
   );
 }

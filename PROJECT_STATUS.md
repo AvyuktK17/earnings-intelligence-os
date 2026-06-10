@@ -655,8 +655,97 @@ report list and viewer pages label each report **Deterministic** vs
 ### Limitations (Bundle B2.2)
 
 Still no automatic Claude API call (generation is manual and local); single
-shared admin token; narrative drafts are imported from local files only. Next
-milestone: **Bundle C — institutional UI redesign and final QA**.
+shared admin token; narrative drafts are imported from local files only.
+
+## Institutional UI redesign & report-layout polish (Bundle C1, complete)
+
+A frontend-only redesign plus a deterministic-PDF layout upgrade. **No backend
+logic, API contracts, secrets, data, GitHub Actions, or LLM usage changed** —
+the only Python touched is the PDF rendering path and an additive `blocks` /
+`report_date` key on the deterministic report generator's return value.
+
+### Design system (`frontend/src/components/`)
+
+Reusable components consolidate patterns that were previously duplicated across
+pages: `ResearchHeader`, `MetricCard`, `SectionHeader`, `StatusPill` (one
+canonical status→color mapping; `StatusBadge` now delegates to it), `DataTable`
+(+ `THead`/`TH`/`TR`/`TD`, responsive overflow with `minWidth`), `EmptyState`,
+`LoadingSkeleton`, `ColdStartNotice`, `SourceBadge`, `ReportTypeBadge`,
+`TickerTabs`, and `ChartPanel`. `Panel`/`StatCard`/`charts`/`ValuationNote`
+remain. Design tokens in `globals.css` gain a `warning` color (previously
+referenced by Claude-assisted badges but **undefined**, so those badges rendered
+colorless — fixed), `edge-strong`/`violet`, a page max-width container, terminal
+scrollbars, a skeleton shimmer, and global `focus-visible` outlines for
+keyboard accessibility. Shared hooks (`src/lib/hooks.ts`) consolidate the
+companies-list and admin-token reads.
+
+### Navigation
+
+The sidebar is grouped into **Markets** (Overview, Peer Comparison, Companies),
+**Research** (Evidence Explorer, Reports, Latest Brief), and **Workflow**
+(Filings, Extraction Ready, Review Queue, Narrative Review), with explicit
+active-state matching (so `/reports` and `/reports/review` never both highlight)
+and a responsive layout that stacks the sidebar above content on mobile. The
+admin-access panel and session-storage token behavior are unchanged.
+
+### Pages
+
+- `/` Overview — analyst landing screen: system stat cards, peer-leader cards,
+  company-coverage table, workflow-health panel, report-coverage panel,
+  peer-fundamentals table, recent-filings and extraction-queue panels, all with
+  deep links.
+- `/peers` — ranked bar chart (metric selector) plus a **sortable** peer table
+  (click any column; missing values always sort last), business-model tags, the
+  dated valuation badge, and the "not a live market feed" disclosure.
+- `/companies/[ticker]` — tabbed deep dive (Overview / Financials / Filings /
+  Evidence / Reports) with KPI cards, trend charts, valuation snapshot,
+  trusted-claim summary, comparability notes, latest report/brief links, and
+  clean empty states.
+- `/evidence` — filter bar (ticker / theme / claim-type / confidence / text
+  search) and compact cards with a visually prominent source-provenance row
+  (accession · document key · chunk id · SEC link · filing date) plus the
+  expandable exact source chunk. Accepts a `?ticker=` deep link.
+- `/reports`, `/reports/latest/[ticker]`, `/reports/review` — report-type and
+  status badges, source-report lineage, version selector, ticker tabs, a PDF
+  download shown only when a PDF exists, evidence-link panels, and the
+  narrative-review approve/edit/reject cards. Public pages still hide `draft`,
+  `rejected`, `superseded`, and `failed` reports.
+- `/filings`, `/filings/[accessionNumber]`, `/extraction-ready`,
+  `/review-queue`, `/briefs/latest/[ticker]` — consistent headers, tables,
+  status visibility, skeletons, and empty states.
+
+### Cold-start & responsive behavior
+
+The API client (`src/lib/api.ts`) tracks in-flight requests and, when one stays
+slow past ~3.5s (almost always the Render free-tier dyno waking from sleep),
+raises a global non-blocking `ColdStartNotice` banner instead of a silent hang.
+Backend errors are still surfaced, never hidden. Tables scroll horizontally with
+sensible minimum widths; the sidebar stacks on mobile.
+
+### Deterministic PDF layout
+
+`render_report_pdf` (in `src/research_report_storage.py`) renders the report's
+intermediate **block model** natively via a new `_ResearchPDF(FPDF)` subclass
+instead of re-parsing HTML: a neutral branded running header (`Earnings
+Intelligence OS Research` + ticker/date), section hierarchy with rules, compact
+financial tables with a shaded header and zebra rows (labels left, figures
+right), evidence quotes, a source appendix, and a numbered footer carrying the
+standard disclaimer. Still pure-Python `fpdf2` (no cairo/pango), private Storage,
+signed-download URL, and latin-1 transliteration only where the core font
+requires it. No Jazz branding or wording is copied; the reference PDF stays in
+`/tmp` and is never committed. The legacy HTML `render_pdf` is retained for
+back-compat but is no longer on the storage path.
+
+### Verification (Bundle C1)
+
+`npm run lint` and `npm run build` pass clean (all 11 routes compile).
+`test_research_report.py` passes against live data (the additive `blocks` key
+did not change the markdown/HTML structure). `render_report_pdf` was validated
+read-only against the real AVGO block model (valid `%PDF` … `%%EOF`, no DB
+writes). The API boots and every public read endpoint returns 200; the
+deterministic report `/pdf` route still 307-redirects to a signed URL, while
+Claude-assisted reports (no PDF) correctly 404. Next milestone: **Bundle C final
+QA** (portfolio screenshots and demo video, deferred).
 
 ## Deployment (complete — MVP live)
 

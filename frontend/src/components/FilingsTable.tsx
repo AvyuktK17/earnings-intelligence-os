@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Filing } from "@/lib/api";
-import StatusBadge from "@/components/StatusBadge";
+import StatusPill from "@/components/StatusPill";
+import { DataTable, TH, THead, TR, TD } from "@/components/DataTable";
 
 export default function FilingsTable({
   filings,
@@ -18,58 +19,49 @@ export default function FilingsTable({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[13px]">
-        <thead>
-          <tr className="border-b border-edge text-left text-[11px] uppercase tracking-wider text-muted">
-            <th className="px-2 py-1.5 font-medium">Ticker</th>
-            <th className="px-2 py-1.5 font-medium">Form</th>
-            <th className="px-2 py-1.5 font-medium">Filed</th>
+    <DataTable minWidth={560}>
+      <THead>
+        <TH>Ticker</TH>
+        <TH>Form</TH>
+        <TH>Filed</TH>
+        {showReportDate && <TH>Report date</TH>}
+        <TH>Accession number</TH>
+        <TH>Status</TH>
+      </THead>
+      <tbody>
+        {filings.map((filing) => (
+          <TR key={filing.id}>
+            <TD mono className="font-medium">
+              <Link
+                href={`/companies/${encodeURIComponent(filing.ticker)}`}
+                className="text-accent hover:underline"
+              >
+                {filing.ticker}
+              </Link>
+            </TD>
+            <TD mono>{filing.form}</TD>
+            <TD mono tone="muted">
+              {filing.filing_date ?? "—"}
+            </TD>
             {showReportDate && (
-              <th className="px-2 py-1.5 font-medium">Report date</th>
+              <TD mono tone="muted">
+                {filing.report_date ?? "—"}
+              </TD>
             )}
-            <th className="px-2 py-1.5 font-medium">Accession number</th>
-            <th className="px-2 py-1.5 font-medium">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filings.map((filing) => (
-            <tr
-              key={filing.id}
-              className="border-b border-edge/60 hover:bg-surface-raised"
-            >
-              <td className="px-2 py-1.5 font-mono font-medium">
-                <Link
-                  href={`/companies/${encodeURIComponent(filing.ticker)}`}
-                  className="text-accent hover:underline"
-                >
-                  {filing.ticker}
-                </Link>
-              </td>
-              <td className="px-2 py-1.5 font-mono">{filing.form}</td>
-              <td className="px-2 py-1.5 font-mono text-muted">
-                {filing.filing_date ?? "—"}
-              </td>
-              {showReportDate && (
-                <td className="px-2 py-1.5 font-mono text-muted">
-                  {filing.report_date ?? "—"}
-                </td>
-              )}
-              <td className="px-2 py-1.5 font-mono">
-                <Link
-                  href={`/filings/${encodeURIComponent(filing.accession_number)}`}
-                  className="text-info hover:underline"
-                >
-                  {filing.accession_number}
-                </Link>
-              </td>
-              <td className="px-2 py-1.5">
-                <StatusBadge status={filing.processing_status} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+            <TD mono>
+              <Link
+                href={`/filings/${encodeURIComponent(filing.accession_number)}`}
+                className="text-info hover:underline"
+              >
+                {filing.accession_number}
+              </Link>
+            </TD>
+            <TD>
+              <StatusPill status={filing.processing_status} />
+            </TD>
+          </TR>
+        ))}
+      </tbody>
+    </DataTable>
   );
 }

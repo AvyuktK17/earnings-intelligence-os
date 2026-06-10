@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api, type ProposedClaim } from "@/lib/api";
-import { ErrorBox, Loading, Panel, SuccessNote } from "@/components/Panel";
+import { ErrorBox, Panel, SuccessNote } from "@/components/Panel";
+import ResearchHeader from "@/components/ResearchHeader";
+import { EmptyState, LoadingSkeleton } from "@/components/States";
 
 const buttonClass =
   "rounded border px-2.5 py-1 text-[12px] font-medium transition-colors disabled:opacity-50";
@@ -244,25 +246,23 @@ export default function ReviewQueuePage() {
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="text-lg font-semibold">Review Queue</h1>
-        <p className="text-[12px] text-muted">
-          Grounded AI-drafted claims awaiting analyst review — nothing enters
-          trusted research without approval
-        </p>
-      </header>
+      <ResearchHeader
+        eyebrow="Workflow"
+        title="Review Queue"
+        description="Grounded AI-drafted claims awaiting analyst review — nothing enters trusted research without approval."
+      />
 
       {flash && <SuccessNote message={flash} />}
       {error && <ErrorBox message={error} />}
-      {loading && <Loading label="Loading review queue…" />}
+      {loading && <LoadingSkeleton rows={4} withCards={false} />}
 
       {!loading && claims && claims.length === 0 && (
-        <Panel>
-          <div className="py-8 text-center">
-            <p className="text-[14px] text-muted">The review queue is empty.</p>
-            <p className="mt-1 text-[12px] text-faint">
+        <EmptyState
+          title="The review queue is empty."
+          hint={
+            <>
               New grounded claims appear here after a manual extraction run.
-              Reviewed claims can be promoted and then published via the{" "}
+              Reviewed claims can be promoted and published via the{" "}
               <Link
                 href="/briefs/latest/AVGO"
                 className="text-info hover:underline"
@@ -270,9 +270,9 @@ export default function ReviewQueuePage() {
                 latest brief
               </Link>
               .
-            </p>
-          </div>
-        </Panel>
+            </>
+          }
+        />
       )}
 
       {!loading &&

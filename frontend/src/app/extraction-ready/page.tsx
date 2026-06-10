@@ -9,8 +9,10 @@ import {
   type ExtractionReadyFiling,
   type ExtractionReadyResponse,
 } from "@/lib/api";
-import { ErrorBox, Loading, Panel, SuccessNote } from "@/components/Panel";
+import { ErrorBox, SuccessNote } from "@/components/Panel";
 import StatusBadge from "@/components/StatusBadge";
+import ResearchHeader from "@/components/ResearchHeader";
+import { EmptyState, LoadingSkeleton } from "@/components/States";
 
 interface Notice {
   kind: "success" | "error";
@@ -337,24 +339,20 @@ export default function ExtractionReadyPage() {
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="text-lg font-semibold">Extraction Ready</h1>
-        <p className="text-[12px] text-muted">
-          These earnings-release exhibits have been ingested and chunked. They
-          are ready for manual AI claim extraction.
-        </p>
-      </header>
+      <ResearchHeader
+        eyebrow="Workflow"
+        title="Extraction Ready"
+        description="Earnings-release exhibits that have been ingested and chunked — ready for admin-triggered grounded claim extraction."
+      />
 
       {error && <ErrorBox message={error} />}
-      {loading && !error && <Loading label="Loading extraction queue…" />}
+      {loading && !error && <LoadingSkeleton rows={4} withCards={false} />}
 
       {!loading && !error && data && data.filings.length === 0 && (
-        <Panel>
-          <p className="px-1 py-6 text-[13px] text-muted">
-            No extraction-ready filings yet. The exhibit worker marks 8-K
-            filings here once their earnings release is ingested and chunked.
-          </p>
-        </Panel>
+        <EmptyState
+          title="No extraction-ready filings yet."
+          hint="The exhibit worker marks 8-K filings here once their earnings release is ingested and chunked."
+        />
       )}
 
       {!loading && !error && data && data.filings.length > 0 && (

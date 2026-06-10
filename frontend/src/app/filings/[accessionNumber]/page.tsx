@@ -3,8 +3,11 @@
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { api, ApiError, type FilingDetail } from "@/lib/api";
-import StatusBadge from "@/components/StatusBadge";
-import { ErrorBox, Loading, Panel } from "@/components/Panel";
+import StatusPill from "@/components/StatusPill";
+import { ErrorBox, Panel } from "@/components/Panel";
+import ResearchHeader from "@/components/ResearchHeader";
+import { DataTable, TH, THead, TR, TD } from "@/components/DataTable";
+import { LoadingSkeleton } from "@/components/States";
 
 function Field({
   label,
@@ -71,14 +74,21 @@ export default function FilingDetailPage({
 
   return (
     <div className="space-y-5">
-      <header className="flex items-baseline gap-3">
-        <h1 className="text-lg font-semibold">Filing detail</h1>
-        <Link href="/filings" className="text-[12px] text-info hover:underline">
-          ← back to filings
-        </Link>
-      </header>
+      <ResearchHeader
+        eyebrow="Workflow"
+        title="Filing detail"
+        description={accession}
+        actions={
+          <Link
+            href="/filings"
+            className="text-[12px] text-info hover:underline"
+          >
+            ← back to filings
+          </Link>
+        }
+      />
 
-      {loading && <Loading label="Loading filing…" />}
+      {loading && <LoadingSkeleton rows={6} />}
       {error && <ErrorBox message={error} />}
       {notFound && (
         <ErrorBox message={`No filing found for ${accession}.`} />
@@ -102,7 +112,7 @@ export default function FilingDetailPage({
                 {detail.filing.accession_number}
               </Field>
               <Field label="Status">
-                <StatusBadge status={detail.filing.processing_status} />
+                <StatusPill status={detail.filing.processing_status} />
               </Field>
               <Field label="Chunk count">{detail.chunk_count}</Field>
               <Field label="SEC URL">
@@ -142,24 +152,20 @@ export default function FilingDetailPage({
                 No exhibit documents recorded for this filing.
               </p>
             ) : (
-              <table className="w-full text-[13px]">
-                <thead>
-                  <tr className="border-b border-edge text-left text-[11px] uppercase tracking-wider text-muted">
-                    <th className="px-2 py-1.5 font-medium">Type</th>
-                    <th className="px-2 py-1.5 font-medium">Filename</th>
-                    <th className="px-2 py-1.5 font-medium">SEC URL</th>
-                    <th className="px-2 py-1.5 font-medium">HTML stored</th>
-                    <th className="px-2 py-1.5 font-medium">Text stored</th>
-                  </tr>
-                </thead>
+              <DataTable minWidth={560}>
+                <THead>
+                  <TH>Type</TH>
+                  <TH>Filename</TH>
+                  <TH>SEC URL</TH>
+                  <TH>HTML stored</TH>
+                  <TH>Text stored</TH>
+                </THead>
                 <tbody>
                   {detail.documents.map((doc) => (
-                    <tr key={doc.id} className="border-b border-edge/60">
-                      <td className="px-2 py-1.5 font-mono">
-                        {doc.document_type}
-                      </td>
-                      <td className="px-2 py-1.5 font-mono">{doc.filename}</td>
-                      <td className="px-2 py-1.5">
+                    <TR key={doc.id}>
+                      <TD mono>{doc.document_type}</TD>
+                      <TD mono>{doc.filename}</TD>
+                      <TD>
                         {doc.sec_url ? (
                           <a
                             href={doc.sec_url}
@@ -172,17 +178,17 @@ export default function FilingDetailPage({
                         ) : (
                           "—"
                         )}
-                      </td>
-                      <td className="px-2 py-1.5 font-mono">
+                      </TD>
+                      <TD mono>
                         <PathFlag present={Boolean(doc.html_storage_path)} />
-                      </td>
-                      <td className="px-2 py-1.5 font-mono">
+                      </TD>
+                      <TD mono>
                         <PathFlag present={Boolean(doc.text_storage_path)} />
-                      </td>
-                    </tr>
+                      </TD>
+                    </TR>
                   ))}
                 </tbody>
-              </table>
+              </DataTable>
             )}
           </Panel>
         </>

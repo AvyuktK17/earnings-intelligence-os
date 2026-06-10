@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { api, type FilingsResponse } from "@/lib/api";
 import FilingsTable from "@/components/FilingsTable";
-import { ErrorBox, Loading, Panel } from "@/components/Panel";
+import { ErrorBox, Panel } from "@/components/Panel";
+import ResearchHeader from "@/components/ResearchHeader";
+import { LoadingSkeleton } from "@/components/States";
+import { FALLBACK_TICKERS } from "@/lib/hooks";
 
-// Fallback only if GET /companies fails; the live list comes from the API.
-const FALLBACK_TICKERS = ["QCOM", "AMD", "NVDA", "INTC", "AVGO"];
 const STATUSES = ["", "detected", "downloaded", "parsed", "chunked", "failed"];
 const LIMITS = [10, 25, 50, 100];
 
@@ -79,12 +80,11 @@ export default function FilingsPage() {
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="text-lg font-semibold">Filings</h1>
-        <p className="text-[12px] text-muted">
-          SEC EDGAR filings detected by the monitor
-        </p>
-      </header>
+      <ResearchHeader
+        eyebrow="Workflow"
+        title="Filings"
+        description="SEC EDGAR filings detected by the monitor, with their processing lifecycle status."
+      />
 
       <Panel
         title={`Filing feed${data ? ` · ${data.count} shown` : ""}`}
@@ -138,7 +138,9 @@ export default function FilingsPage() {
         }
       >
         {error && <ErrorBox message={error} />}
-        {loading && !error && <Loading label="Loading filings…" />}
+        {loading && !error && (
+          <LoadingSkeleton rows={6} withCards={false} />
+        )}
         {!loading && !error && data && (
           <FilingsTable filings={data.filings} showReportDate />
         )}

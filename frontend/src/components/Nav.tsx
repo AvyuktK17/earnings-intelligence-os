@@ -1,105 +1,149 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import AdminAccess from "@/components/AdminAccess";
-import { api } from "@/lib/api";
+import { useCompanyTickers } from "@/lib/hooks";
 
-const LINKS = [
-  { href: "/", label: "Overview" },
-  { href: "/peers", label: "Peer Comparison" },
-  { href: "/filings", label: "Filings" },
-  { href: "/extraction-ready", label: "Extraction Ready" },
-  { href: "/review-queue", label: "Review Queue" },
-  { href: "/evidence", label: "Evidence Explorer" },
-  { href: "/reports", label: "Reports" },
-  { href: "/reports/review", label: "Narrative Review" },
-  { href: "/briefs/latest/AVGO", label: "Latest Brief" },
+type NavLink = {
+  href: string;
+  label: string;
+  /** Custom active matcher; defaults to exact or nested match. */
+  match?: (pathname: string) => boolean;
+};
+
+type NavGroup = { label: string; links: NavLink[] };
+
+// Grouped navigation: Markets / Research / Workflow. Active matching is
+// explicit where prefixes overlap (e.g. /reports vs /reports/review) so only
+// one item ever highlights.
+const GROUPS: NavGroup[] = [
+  {
+    label: "Markets",
+    links: [
+      { href: "/", label: "Overview", match: (p) => p === "/" },
+      { href: "/peers", label: "Peer Comparison" },
+    ],
+  },
+  {
+    label: "Research",
+    links: [
+      { href: "/evidence", label: "Evidence Explorer" },
+      {
+        href: "/reports",
+        label: "Reports",
+        // Reports index + per-company viewers, but NOT the review queue.
+        match: (p) =>
+          p === "/reports" || p.startsWith("/reports/latest"),
+      },
+      {
+        href: "/briefs/latest/AVGO",
+        label: "Latest Brief",
+        match: (p) => p.startsWith("/briefs"),
+      },
+    ],
+  },
+  {
+    label: "Workflow",
+    links: [
+      { href: "/filings", label: "Filings" },
+      { href: "/extraction-ready", label: "Extraction Ready" },
+      { href: "/review-queue", label: "Review Queue" },
+      {
+        href: "/reports/review",
+        label: "Narrative Review",
+        match: (p) => p.startsWith("/reports/review"),
+      },
+    ],
+  },
 ];
 
-// Fallback only if GET /companies fails; the live list comes from the API.
-const FALLBACK_TICKERS = ["AMD", "AVGO", "INTC", "NVDA", "QCOM"];
-
-function isActive(pathname: string, href: string): boolean {
+function defaultMatch(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
-  if (href.startsWith("/briefs")) return pathname.startsWith("/briefs");
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export default function Nav() {
   const pathname = usePathname();
-  const [tickers, setTickers] = useState<string[] | null>(null);
+  const tickers = useCompanyTickers();
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadCompanies() {
-      try {
-        const result = await api.getCompanies();
-        if (!cancelled) setTickers(result.companies.map((c) => c.ticker));
-      } catch {
-        if (!cancelled) setTickers(FALLBACK_TICKERS);
-      }
-    }
-
-    loadCompanies();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  function NavItem({ link }: { link: NavLink }) {
+    const active = link.match
+      ? link.match(pathname)
+      : defaultMatch(pathname, link.href);
+    return (
+      <Link
+        href={link.href}
+        aria-current={active ? "page" : undefined}
+        className={`block rounded px-3 py-1.5 text-[13px] transition-colors ${
+          active
+            ? "bg-surface-raised font-medium text-accent shadow-[inset_2px_0_0_0_var(--accent)]"
+            : "text-muted hover:bg-surface-raised hover:text-foreground"
+        }`}
+      >
+        {link.label}
+      </Link>
+    );
+  }
 
   return (
-    <aside className="w-56 shrink-0 border-r border-edge bg-surface flex flex-col min-h-screen">
-      <div className="px-4 py-5 border-b border-edge">
+    <aside className="flex w-full shrink-0 flex-col border-b border-edge bg-surface lg:min-h-screen lg:w-60 lg:border-b-0 lg:border-r">
+      <div className="border-b border-edge px-4 py-4">
         <Link href="/" className="block">
           <div className="text-sm font-semibold tracking-wide">
             Earnings Intelligence OS
           </div>
-          <div className="text-[11px] text-muted mt-0.5 tracking-wider uppercase">
+          <div className="mt-0.5 text-[10px] uppercase tracking-[0.18em] text-muted">
             Semiconductor Research Terminal
           </div>
         </Link>
       </div>
-      <nav className="flex-1 px-2 py-3 space-y-0.5">
-        {LINKS.map((link) => (
-          <Link
-            key={link.href}
-            href={link.href}
-            className={`block rounded px-3 py-1.5 text-[13px] transition-colors ${
-              isActive(pathname, link.href)
-                ? "bg-surface-raised text-accent font-medium"
-                : "text-muted hover:text-foreground hover:bg-surface-raised"
-            }`}
-          >
-            {link.label}
-          </Link>
-        ))}
 
-        <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-faint">
-          Companies
-        </div>
-        {(tickers ?? []).map((ticker) => (
-          <Link
-            key={ticker}
-            href={`/companies/${encodeURIComponent(ticker)}`}
-            className={`block rounded px-3 py-1 font-mono text-[12px] transition-colors ${
-              pathname === `/companies/${ticker}`
-                ? "bg-surface-raised text-accent font-medium"
-                : "text-muted hover:text-foreground hover:bg-surface-raised"
-            }`}
-          >
-            {ticker}
-          </Link>
-        ))}
-        {tickers === null && (
-          <div className="px-3 py-1 font-mono text-[11px] text-faint">
-            loading…
+      <nav className="flex-1 space-y-4 px-2 py-3" aria-label="Primary">
+        {GROUPS.map((group) => (
+          <div key={group.label} className="space-y-0.5">
+            <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-faint">
+              {group.label}
+            </div>
+            {group.links.map((link) => (
+              <NavItem key={link.href} link={link} />
+            ))}
+            {group.label === "Markets" && (
+              <div className="pt-1">
+                <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-faint">
+                  Companies
+                </div>
+                <div className="flex flex-wrap gap-1 px-2 lg:block lg:space-y-0.5">
+                  {(tickers ?? []).map((ticker) => (
+                    <Link
+                      key={ticker}
+                      href={`/companies/${encodeURIComponent(ticker)}`}
+                      aria-current={
+                        pathname === `/companies/${ticker}` ? "page" : undefined
+                      }
+                      className={`block rounded px-3 py-1 font-mono text-[12px] transition-colors ${
+                        pathname === `/companies/${ticker}`
+                          ? "bg-surface-raised font-medium text-accent"
+                          : "text-muted hover:bg-surface-raised hover:text-foreground"
+                      }`}
+                    >
+                      {ticker}
+                    </Link>
+                  ))}
+                  {tickers === null && (
+                    <div className="px-3 py-1 font-mono text-[11px] text-faint">
+                      loading…
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
-        )}
+        ))}
       </nav>
+
       <AdminAccess />
-      <div className="px-4 py-3 border-t border-edge text-[11px] text-faint font-mono">
+      <div className="hidden border-t border-edge px-4 py-2.5 font-mono text-[10.5px] text-faint lg:block">
         live · SEC ingestion + analyst review
       </div>
     </aside>

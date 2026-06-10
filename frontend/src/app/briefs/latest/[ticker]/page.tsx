@@ -4,41 +4,12 @@ import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import { api, ApiError, type Brief } from "@/lib/api";
-import { ErrorBox, Loading, Panel, StatCard, SuccessNote } from "@/components/Panel";
-
-// Fallback only if GET /companies fails; the live list comes from the API.
-const FALLBACK_TICKERS = ["AMD", "AVGO", "INTC", "NVDA", "QCOM"];
-
-function CompanyTabs({
-  tickers,
-  active,
-}: {
-  tickers: string[] | null;
-  active: string;
-}) {
-  if (tickers === null) {
-    return (
-      <div className="font-mono text-[11px] text-faint">loading companies…</div>
-    );
-  }
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {tickers.map((t) => (
-        <Link
-          key={t}
-          href={`/briefs/latest/${encodeURIComponent(t)}`}
-          className={`rounded border px-2.5 py-1 font-mono text-[12px] transition-colors ${
-            t === active
-              ? "border-accent/60 bg-accent/10 font-semibold text-accent"
-              : "border-edge text-muted hover:border-accent/40 hover:text-foreground"
-          }`}
-        >
-          {t}
-        </Link>
-      ))}
-    </div>
-  );
-}
+import { ErrorBox, Panel, SuccessNote } from "@/components/Panel";
+import ResearchHeader from "@/components/ResearchHeader";
+import MetricCard from "@/components/MetricCard";
+import TickerTabs from "@/components/TickerTabs";
+import { EmptyState, LoadingSkeleton } from "@/components/States";
+import { useCompanyTickers } from "@/lib/hooks";
 
 export default function LatestBriefPage({
   params,
@@ -47,6 +18,7 @@ export default function LatestBriefPage({
 }) {
   const { ticker: rawTicker } = use(params);
   const ticker = decodeURIComponent(rawTicker).toUpperCase();
+  const tickers = useCompanyTickers();
 
   const [brief, setBrief] = useState<Brief | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -55,31 +27,11 @@ export default function LatestBriefPage({
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const [tickers, setTickers] = useState<string[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-
-    async function loadCompanies() {
-      try {
-        const result = await api.getCompanies();
-        if (!cancelled) setTickers(result.companies.map((c) => c.ticker));
-      } catch {
-        // Companies endpoint unavailable — fall back to the known watchlist.
-        if (!cancelled) setTickers(FALLBACK_TICKERS);
-      }
-    }
-
-    loadCompanies();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
     async function load() {
+      setLoading(true);
       try {
         const data = await api.getLatestBrief(ticker);
         if (!cancelled) {
@@ -93,14 +45,11 @@ export default function LatestBriefPage({
           setBrief(null);
           setNotFound(true);
         } else {
-          setError(
-            err instanceof Error ? err.message : "Failed to load brief.",
-          );
+          setError(err instanceof Error ? err.message : "Failed to load brief.");
         }
       }
       if (!cancelled) setLoading(false);
     }
-
     load();
     return () => {
       cancelled = true;
@@ -128,60 +77,51 @@ export default function LatestBriefPage({
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="text-lg font-semibold">Latest Brief · {ticker}</h1>
-        <p className="text-[12px] text-muted">
-          Evidence-linked briefing built only from trusted, human-reviewed
-          claims
-        </p>
-      </header>
+      <ResearchHeader
+        eyebrow="Research"
+        title={`Latest Brief · ${ticker}`}
+        description="Evidence-linked briefing built only from trusted, human-reviewed claims."
+      />
 
-      <CompanyTabs tickers={tickers} active={ticker} />
+      <TickerTabs tickers={tickers} active={ticker} basePath="/briefs/latest" />
 
       {flash && <SuccessNote message={flash} />}
       {error && <ErrorBox message={error} />}
-      {loading && <Loading label="Loading brief…" />}
+      {loading && <LoadingSkeleton rows={8} />}
 
-      {notFound && (
-        <Panel>
-          <div className="py-8 text-center">
-            <p className="text-[14px] text-muted">
-              No stored brief exists for {ticker} yet.
-            </p>
-            <p className="mt-1 text-[12px] text-faint">
-              Briefs are generated from promoted trusted claims. Once a
-              filing for {ticker} is approved with trusted claims, generate
-              the first version from the{" "}
-              <Link
-                href="/extraction-ready"
-                className="text-info hover:underline"
-              >
+      {notFound && !loading && (
+        <EmptyState
+          title={`No stored brief exists for ${ticker} yet.`}
+          hint={
+            <>
+              Briefs are generated from promoted trusted claims. Once a filing for{" "}
+              {ticker} is approved with trusted claims, generate the first version
+              from the{" "}
+              <Link href="/extraction-ready" className="text-info hover:underline">
                 Extraction Ready page
               </Link>
               .
-            </p>
-          </div>
-        </Panel>
+            </>
+          }
+        />
       )}
 
-      {brief && (
+      {brief && !loading && (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard
+            <MetricCard
               label="Version"
               value={`v${brief.version_number}`}
-              hint={`generated ${new Date(brief.generated_at).toLocaleString()}`}
+              hint={`generated ${new Date(brief.generated_at).toLocaleDateString()}`}
             />
-            <StatCard
+            <MetricCard
               label="Trusted claims"
               value={brief.trusted_claim_count}
               hint="human-reviewed only"
+              tone="positive"
             />
-            <StatCard label="Factual" value={brief.factual_claim_count} />
-            <StatCard
-              label="Interpretive"
-              value={brief.interpretive_claim_count}
-            />
+            <MetricCard label="Factual" value={brief.factual_claim_count} />
+            <MetricCard label="Interpretive" value={brief.interpretive_claim_count} />
           </div>
 
           <Panel
