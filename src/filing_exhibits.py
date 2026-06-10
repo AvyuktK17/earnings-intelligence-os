@@ -15,12 +15,36 @@ if not _USER_AGENT:
 _TIMEOUT_SECONDS = 15
 
 # "pr" before the extension catches press-release names like q1fy27pr.htm
-# (NVIDIA's convention), which carry no ex-99/earnings marker.
+# (NVIDIA's convention); "99.1" with no separator catches names like
+# q12026991.htm (AMD's convention). Both carry no ex-99/earnings marker.
 _EARNINGS_FILENAME_PATTERNS = re.compile(
-    r"(ex[_\-]?99|exhibit[_\-]?99|xex99|99[_\-]1|earnings|press[_\-]?release|"
-    r"results|pr\.html?$)",
+    r"(ex[_\-]?99|exhibit[_\-]?99|xex99|99[_\-.]?1(?=\D|$)|earnings|"
+    r"press[_\-]?release|results|pr\.html?$)",
     re.IGNORECASE,
 )
+
+# Quality ranking for earnings-release candidates: prose press releases are
+# better extraction sources than slide decks, so document quality decides
+# and file size only breaks ties within a tier (lower tier wins).
+_SLIDE_DECK_PATTERNS = re.compile(r"(slide|presentation|deck)", re.IGNORECASE)
+_QUALITY_TIERS = (
+    (1, re.compile(r"(press[_\-]?release|earnings[_\-]?release|pr\.html?$)", re.IGNORECASE)),
+    (2, re.compile(r"(financial[_\-]?results|results)", re.IGNORECASE)),
+    (3, re.compile(r"(ex[_\-]?99|exhibit[_\-]?99|xex99|99[_\-.]?1(?=\D|$))", re.IGNORECASE)),
+)
+_SLIDE_DECK_TIER = 4
+_FALLBACK_TIER = 5
+
+
+def _exhibit_quality_tier(exhibit: dict) -> int:
+    """Rank an earnings-release candidate; lower is better."""
+    text = f"{exhibit.get('filename', '')} {exhibit.get('description', '')}"
+    if _SLIDE_DECK_PATTERNS.search(text):
+        return _SLIDE_DECK_TIER
+    for tier, pattern in _QUALITY_TIERS:
+        if pattern.search(text):
+            return tier
+    return _FALLBACK_TIER
 
 
 def get_filing_index_url(sec_url: str) -> str:
@@ -98,8 +122,10 @@ def get_filing_exhibits(sec_url: str) -> list[dict]:
 def select_earnings_release_exhibit(exhibits: list[dict]) -> dict | None:
     """Select the most likely earnings release exhibit (EX-99.1) from a list.
 
-    Prefers HTML files matching earnings release filename patterns. Excludes
-    XML, XBRL, stylesheets, scripts, and the primary filing document.
+    Prefers HTML files matching earnings release filename patterns, ranked
+    press release > financial results > EX-99.1 marker > slide deck, with
+    file size breaking ties within a tier. Excludes XML, XBRL, stylesheets,
+    scripts, and the primary filing document.
 
     Args:
         exhibits: The list returned by get_filing_exhibits().
@@ -115,7 +141,9 @@ def select_earnings_release_exhibit(exhibits: list[dict]) -> dict | None:
     if not candidates:
         return None
 
-    candidates.sort(key=lambda ex: ex.get("size_bytes", 0), reverse=True)
+    candidates.sort(
+        key=lambda ex: (_exhibit_quality_tier(ex), -ex.get("size_bytes", 0))
+    )
     return candidates[0]
 
 

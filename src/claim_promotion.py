@@ -10,6 +10,7 @@ No AI calls are made. Pending and rejected claims are never promoted.
 
 from datetime import datetime, timezone
 
+from src.claim_extraction_status import mark_claim_extraction_approved
 from src.database import get_supabase_client
 
 
@@ -30,7 +31,9 @@ def promote_reviewed_claims(
 
     Returns:
         A dict with eligible_count, promoted_count, skipped_existing_count,
-        and promoted_claims (list of summary dicts for newly inserted rows).
+        promoted_claims (list of summary dicts for newly inserted rows), and
+        approved_filings (accession numbers whose claim_extraction_status
+        was advanced to "approved" because no grounded pending rows remain).
     """
     supabase = get_supabase_client()
 
@@ -110,9 +113,37 @@ def promote_reviewed_claims(
             }
         )
 
+    # Filing-level extraction lifecycle: a filing touched by this promotion
+    # run whose grounded claims are all reviewed (no grounded pending rows
+    # left) is marked "approved". Only filings with eligible claims in this
+    # run are considered, so reviewing a single claim never flips the status
+    # and scoped promotion only updates the matching filing. Ungrounded
+    # legacy rows are ignored by both the eligibility and pending filters.
+    approved_filings = []
+    for affected_accession in sorted({c["accession_number"] for c in eligible}):
+        pending_grounded = (
+            supabase.table("proposed_claims")
+            .select("id", count="exact")
+            .eq("accession_number", affected_accession)
+            .eq("review_status", "pending")
+            .not_.is_("source_chunk_id", "null")
+            .execute()
+            .count
+            or 0
+        )
+        if pending_grounded == 0:
+            try:
+                mark_claim_extraction_approved(affected_accession)
+                approved_filings.append(affected_accession)
+            except ValueError:
+                # Claims without a filings row (e.g. temporary test data)
+                # have no filing-level status to update.
+                pass
+
     return {
         "eligible_count": len(eligible),
         "promoted_count": len(promoted),
         "skipped_existing_count": skipped_existing,
         "promoted_claims": promoted,
+        "approved_filings": approved_filings,
     }

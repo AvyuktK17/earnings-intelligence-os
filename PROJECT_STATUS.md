@@ -27,7 +27,7 @@ Build an Earnings Intelligence OS for semiconductor companies:
 
 * `companies` — ticker → company_name watchlist
 * `financial_metrics`
-* `filings` — one row per detected filing; lifecycle status, Storage paths, timestamps, processing_error; exhibit columns: `exhibit_processing_status` (`not_checked` / `processed` / `not_found` / `failed`, default `not_checked`), `exhibit_checked_at`, `exhibit_processing_error`, `earnings_release_document_id` → `filing_documents(id)`
+* `filings` — one row per detected filing; lifecycle status, Storage paths, timestamps, processing_error; exhibit columns: `exhibit_processing_status` (`not_checked` / `processed` / `not_found` / `failed`, default `not_checked`), `exhibit_checked_at`, `exhibit_processing_error`, `earnings_release_document_id` → `filing_documents(id)`; extraction columns: `claim_extraction_status` (`not_started` / `pending_review` / `approved` / `failed`, default `not_started`), `claim_extracted_at`, `claim_extraction_error`
 * `filing_documents` — exhibit documents (e.g. EX-99.1) per filing; unique on `(accession_number, filename)`
 * `filing_chunks` — AI-ready chunks; unique on `(accession_number, document_key, chunk_index)`; primary chunks use `document_key = "primary"`, exhibit chunks use `document_key = "exhibit:{filename}"`
 * `proposed_claims` — AI-drafted claims awaiting review; `review_status` is `pending` / `approved` / `edited` / `rejected`; grounded rows have `source_chunk_id`
@@ -69,8 +69,13 @@ Exhibit support (`src/filing_exhibits.py`, `src/process_filing_exhibit.py`):
 discovers the SEC filing index, selects the likely earnings-release exhibit
 (EX-99.1), downloads/parses/uploads it, and records it in `filing_documents`
 (`process_earnings_release_exhibit` returns the row's
-`filing_document_id`). The filename matcher also recognizes
-press-release names ending in `pr.htm` (NVIDIA's convention).
+`filing_document_id`). The filename matcher recognizes press-release names
+ending in `pr.htm` (NVIDIA's convention) and `99.1` names without a
+separator like `q12026991.htm` (AMD's convention). Candidates are ranked
+press release / earnings release (tier 1) > financial results (2) >
+EX-99.1 marker (3) > slide deck / presentation (4) > other (5), with file
+size only breaking ties within a tier — so a small press release always
+beats a large slide deck.
 Multi-document chunking (`src/filing_chunker.py`) chunks both primary
 documents and exhibits idempotently.
 
@@ -110,6 +115,25 @@ documents and exhibits idempotently.
   rerun-safe via a DELETE scoped to `(accession_number, document_key, pending)`
 * Gemini API key in `.env` and GitHub Secrets; never called from the API or tests
 
+## Manual dashboard-triggered claim extraction (complete)
+
+`src/claim_extraction_status.py` + `src/ready_filing_extraction.py`:
+
+* `extract_claims_for_ready_filing(accession_number, max_claims=5)` requires
+  an extraction-ready filing (processed exhibit + document id), builds the
+  exhibit `document_key`, and reuses the existing grounded extractor
+  (`extract_and_store_claims`), which replaces pending drafts only after
+  valid new claims exist — failed runs never delete drafts
+* filing lifecycle: `not_started` → `pending_review` (successful run) /
+  `failed` (error stored, truncated to 500 chars) → `approved` (set by
+  promotion when no grounded pending rows remain for the filing)
+* quota / rate-limit / availability errors raise
+  `ClaimExtractionQuotaError`; other provider errors raise a caller-safe
+  `ClaimExtractionError` (raw detail only on the filing row, never to
+  callers)
+* Gemini stays manual and admin-triggered (free-quota control + analyst
+  oversight); nothing is scheduled and GitHub Actions never extracts
+
 ## Human review workflow (complete)
 
 * `src/claim_review.py`: `approve_claim`, `approve_claim_with_edits`
@@ -123,7 +147,9 @@ documents and exhibits idempotently.
 * `src/claim_promotion.py`: `promote_reviewed_claims()` promotes `approved` /
   `edited` grounded claims into `qualitative_claims`, using the reviewer's
   edited wording when present; already-promoted claims are skipped by
-  `proposed_claim_id`, so reruns never duplicate
+  `proposed_claim_id`, so reruns never duplicate; after promotion, any
+  affected filing with no grounded pending rows left is marked
+  `claim_extraction_status = "approved"` (returned as `approved_filings`)
 * CLI: `promote_claims.py`
 * 5 trusted AVGO claims are live (proposed_claim_ids 30–34)
 
@@ -166,8 +192,11 @@ Read endpoints (public):
   (`source_chunk_id` null) are never exposed
 * `GET /extraction-ready` — filings with a processed, chunked
   earnings-release exhibit, newest first; each row carries the exhibit
-  filename, `document_key`, `chunk_count`, and
-  `ready_for_extraction` — the queue for manual grounded-claim extraction
+  filename, `document_key`, `chunk_count`, `ready_for_extraction`, plus
+  the extraction lifecycle (`claim_extraction_status`,
+  `claim_extracted_at`, `claim_extraction_error`),
+  `pending_grounded_claim_count`, `trusted_promoted_claim_count`, and
+  `latest_brief_version` — the queue for manual grounded-claim extraction
 
 Write endpoints (analyst workflow; all require `X-Admin-Token`):
 
@@ -183,6 +212,12 @@ Write endpoints (analyst workflow; all require `X-Admin-Token`):
   dashboard only ever calls the scoped form)
 * `POST /briefs/generate` — requires `{"ticker", "accession_number"}`;
   ticker uppercased; 404 unknown filing, 400 when no trusted claims exist
+* `POST /extraction-ready/{accession_number}/extract` — manual grounded
+  Gemini extraction on the filing's processed exhibit; optional body
+  `{"max_claims": 1–10}` (default 5, 422 outside range); 404 unknown
+  filing, 400 not extraction-ready, 429 on Gemini quota/rate-limit, safe
+  500 otherwise (no keys, stack traces, or raw provider responses); the
+  only route that calls Gemini
 
 CORS: `CORSMiddleware` allows browser calls from the origins in the optional
 `ALLOWED_ORIGINS` env var (comma-separated; defaults to
@@ -230,8 +265,13 @@ Routes:
   fallback if the endpoint fails)
 * `/filings/[accessionNumber]` — full filing metadata, timestamps,
   processing error, document list with Storage flags, chunk count
-* `/extraction-ready` — ingested + chunked earnings-release exhibits with
-  exhibit filename, document key, chunk count, and status badge; accession
+* `/extraction-ready` — per-filing cards with exhibit filename, document
+  key, chunk count, exhibit + extraction-state badges, pending/trusted
+  claim counts, and latest brief version; admin-only **Extract Claims**
+  button (requires a saved token, disabled while running) that calls the
+  protected extract endpoint, shows a compact success note with a "Review
+  drafted claims" link to `/review-queue`, a dedicated quota message on
+  429, and the stored extraction error for failed filings; accession
   numbers link to the filing detail page; clean empty state
 * `/review-queue` — grounded pending claims grouped by filing; approve /
   edit-and-approve / reject with optional reviewer notes; per-filing
@@ -270,9 +310,16 @@ API tests: `test_api_health.py`, `test_api_filings.py`, `test_api_briefs.py`,
 `test_api_auth.py` (public reads, 401s, correct-token action, fail-closed
 500), `test_api_review_actions.py`,
 `test_api_promotion.py` (global + scoped modes), `test_api_brief_generation.py`,
-`test_api_extraction_ready.py`, and `test_process_pending_exhibits.py`
+`test_api_extraction_ready.py`, `test_process_pending_exhibits.py`
 (worker processed / not-found / failed paths, idempotency, and proof that
-grounded chunks and trusted claims survive reruns).
+grounded chunks and trusted claims survive reruns),
+`test_exhibit_selection.py` (synthetic press-release-first ranking, no
+network), `test_claim_extraction_status.py`,
+`test_ready_filing_extraction.py`, and `test_api_manual_extraction.py`
+(auth, validation, 404/400/429/safe-500 mapping, and the
+promotion-driven `approved` lifecycle). Every extraction test
+monkeypatches the Gemini-backed extractor — automated tests never consume
+free-tier quota.
 Write-endpoint tests supply a temporary admin token via the environment
 (never printed),
 insert clearly marked temporary rows and delete them in `finally` blocks;
@@ -292,10 +339,11 @@ deprecated; install httpx2 instead.` — harmless, left as-is.
 
 ## Next milestone
 
-1. Add protected dashboard-triggered manual claim extraction for
-   extraction-ready filings.
-2. Generate reviewed briefs for AMD, NVDA, INTC, and QCOM.
-3. Add company pages and polish the cross-company overview.
+1. Extract, review, promote, and generate briefs for NVDA, AMD, INTC, and
+   QCOM.
+2. Add company pages.
+3. Polish the cross-company overview.
+4. Clean up legacy rows and finalize demo assets.
 
 ## Safety rules
 

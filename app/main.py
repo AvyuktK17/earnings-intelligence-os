@@ -23,6 +23,11 @@ from src.brief_storage import generate_and_store_earnings_brief
 from src.claim_promotion import promote_reviewed_claims
 from src.claim_review import approve_claim, approve_claim_with_edits, reject_claim
 from src.database import get_supabase_client
+from src.ready_filing_extraction import (
+    ClaimExtractionError,
+    ClaimExtractionQuotaError,
+    extract_claims_for_ready_filing,
+)
 
 load_dotenv()
 
@@ -126,6 +131,10 @@ class GenerateBriefRequest(BaseModel):
 class PromoteClaimsRequest(BaseModel):
     ticker: str | None = None
     accession_number: str | None = None
+
+
+class ExtractClaimsRequest(BaseModel):
+    max_claims: int = Field(default=5, ge=1, le=10)
 
 
 @app.get("/health")
@@ -259,7 +268,9 @@ def list_extraction_ready() -> dict:
         supabase.table("filings")
         .select(
             "id, ticker, accession_number, form, filing_date, "
-            "exhibit_processing_status, earnings_release_document_id"
+            "exhibit_processing_status, earnings_release_document_id, "
+            "claim_extraction_status, claim_extracted_at, "
+            "claim_extraction_error"
         )
         .eq("exhibit_processing_status", "processed")
         .not_.is_("earnings_release_document_id", "null")
@@ -270,6 +281,7 @@ def list_extraction_ready() -> dict:
 
     results = []
     for filing in filings:
+        accession_number = filing["accession_number"]
         document_id = filing["earnings_release_document_id"]
         documents = (
             supabase.table("filing_documents")
@@ -287,11 +299,50 @@ def list_extraction_ready() -> dict:
             .count
             or 0
         )
+        pending_grounded = (
+            supabase.table("proposed_claims")
+            .select("id", count="exact")
+            .eq("accession_number", accession_number)
+            .eq("review_status", "pending")
+            .not_.is_("source_chunk_id", "null")
+            .execute()
+            .count
+            or 0
+        )
+        # qualitative_claims has no accession column; trusted rows are
+        # matched through the proposed_claims they were promoted from.
+        claim_ids = [
+            row["id"]
+            for row in supabase.table("proposed_claims")
+            .select("id")
+            .eq("accession_number", accession_number)
+            .execute()
+            .data
+        ]
+        trusted_promoted = 0
+        if claim_ids:
+            trusted_promoted = (
+                supabase.table("qualitative_claims")
+                .select("proposed_claim_id", count="exact")
+                .in_("proposed_claim_id", claim_ids)
+                .execute()
+                .count
+                or 0
+            )
+        briefs = (
+            supabase.table("earnings_briefs")
+            .select("version_number")
+            .eq("accession_number", accession_number)
+            .order("version_number", desc=True)
+            .limit(1)
+            .execute()
+            .data
+        )
         results.append(
             {
                 "filing_id": filing["id"],
                 "ticker": filing["ticker"],
-                "accession_number": filing["accession_number"],
+                "accession_number": accession_number,
                 "form": filing["form"],
                 "filing_date": filing["filing_date"],
                 "exhibit_processing_status": filing["exhibit_processing_status"],
@@ -300,10 +351,46 @@ def list_extraction_ready() -> dict:
                 "document_key": f"exhibit:{filename}" if filename else None,
                 "chunk_count": chunk_count,
                 "ready_for_extraction": chunk_count > 0,
+                "claim_extraction_status": filing["claim_extraction_status"],
+                "claim_extracted_at": filing["claim_extracted_at"],
+                "claim_extraction_error": filing["claim_extraction_error"],
+                "pending_grounded_claim_count": pending_grounded,
+                "trusted_promoted_claim_count": trusted_promoted,
+                "latest_brief_version": (
+                    briefs[0]["version_number"] if briefs else None
+                ),
             }
         )
 
     return {"count": len(results), "filings": results}
+
+
+@app.post(
+    "/extraction-ready/{accession_number}/extract",
+    dependencies=[Depends(require_admin_token)],
+)
+def extract_claims(
+    accession_number: str, body: ExtractClaimsRequest | None = None
+) -> dict:
+    """Run manual grounded claim extraction on an extraction-ready filing.
+
+    The only route that calls Gemini, and only when an admin triggers it —
+    extraction is never scheduled. Quota and rate-limit failures map to 429
+    so the analyst can back off without burning more free-tier quota.
+    """
+    max_claims = body.max_claims if body else 5
+    try:
+        return extract_claims_for_ready_filing(
+            accession_number, max_claims=max_claims
+        )
+    except ValueError as exc:
+        raise _http_error(exc)
+    except ClaimExtractionQuotaError as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
+    except ClaimExtractionError as exc:
+        # The exception message is already caller-safe; never include the
+        # underlying provider error here.
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/review-queue/{claim_id}/approve", dependencies=[Depends(require_admin_token)])

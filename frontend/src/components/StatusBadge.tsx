@@ -5,6 +5,9 @@ const STATUS_STYLES: Record<string, string> = {
   chunked: "text-positive border-positive/40",
   processed: "text-positive border-positive/40",
   failed: "text-negative border-negative/40",
+  not_started: "text-muted border-edge",
+  pending_review: "text-accent border-accent/40",
+  approved: "text-positive border-positive/40",
 };
 
 export default function StatusBadge({ status }: { status: string }) {

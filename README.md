@@ -69,7 +69,7 @@ no user accounts yet.
 
 **Protected (POST, token required):** `/review-queue/{id}/approve`,
 `/review-queue/{id}/edit`, `/review-queue/{id}/reject`, `/claims/promote`,
-`/briefs/generate`.
+`/briefs/generate`, `/extraction-ready/{accession_number}/extract`.
 
 In the dashboard, paste the token into the **Admin Access** panel at the
 bottom of the sidebar. It is kept in browser session storage only — never
@@ -87,7 +87,32 @@ populated from it.
 
 `GET /extraction-ready` lists filings whose earnings-release exhibit has
 been ingested and chunked — the queue for the manual AI claim-extraction
-step. The API itself never triggers extraction.
+step — including each filing's claim-extraction state, pending and trusted
+claim counts, and latest brief version.
+
+### Manual claim extraction (admin-triggered)
+
+`POST /extraction-ready/{accession_number}/extract` (optional body
+`{"max_claims": 1–10}`, default 5) runs grounded Gemini extraction on the
+filing's processed earnings exhibit. It is the **only** route that calls
+Gemini, and only when an admin triggers it from the dashboard or CLI —
+extraction is never scheduled, keeping free-tier quota under analyst
+control. Quota and rate-limit failures return `429` (no drafts are ever
+deleted by a failed run); other provider failures return a safe `500` and
+the error is recorded on the filing.
+
+Filing-level extraction lifecycle (`claim_extraction_status`):
+
+- `not_started` — no extraction run yet
+- `pending_review` — drafts stored and awaiting analyst review
+- `approved` — every grounded draft reviewed and promotion completed
+  (set automatically when a promotion run leaves no grounded pending rows)
+- `failed` — last run errored; the message is stored in
+  `claim_extraction_error`
+
+Exhibit selection ranks document quality first — press releases beat
+financial-results pages, which beat bare EX-99.1 markers, which beat slide
+decks — and file size only breaks ties within a tier.
 
 ### Automated exhibit ingestion
 
@@ -137,7 +162,7 @@ only to the FastAPI service — never directly to Supabase.
 | `/` | Overview: summary cards + latest filings |
 | `/filings` | Filing feed with ticker/status/limit filters |
 | `/filings/[accessionNumber]` | Filing detail, documents, chunk count |
-| `/extraction-ready` | Ingested + chunked earnings-release exhibits awaiting manual extraction |
+| `/extraction-ready` | Exhibit queue with extraction-state badges and an admin-only Extract Claims action |
 | `/review-queue` | Approve / edit / reject grounded pending claims; scoped promotion |
 | `/briefs/latest/[ticker]` | Latest stored brief with markdown rendering and version generation |
 

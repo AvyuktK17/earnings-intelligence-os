@@ -133,11 +133,26 @@ export interface ExtractionReadyFiling {
   document_key: string | null;
   chunk_count: number;
   ready_for_extraction: boolean;
+  claim_extraction_status: string;
+  claim_extracted_at: string | null;
+  claim_extraction_error: string | null;
+  pending_grounded_claim_count: number;
+  trusted_promoted_claim_count: number;
+  latest_brief_version: number | null;
 }
 
 export interface ExtractionReadyResponse {
   count: number;
   filings: ExtractionReadyFiling[];
+}
+
+export interface ClaimExtractionResult {
+  ticker: string;
+  accession_number: string;
+  document_key: string;
+  proposed_claim_count: number;
+  skipped_invalid_count: number;
+  claim_extraction_status: string;
 }
 
 export interface PromotionResult {
@@ -247,6 +262,16 @@ export const api = {
 
   getExtractionReady() {
     return request<ExtractionReadyResponse>("/extraction-ready");
+  },
+
+  extractClaims(accessionNumber: string, maxClaims = 5) {
+    return request<ClaimExtractionResult>(
+      `/extraction-ready/${encodeURIComponent(accessionNumber)}/extract`,
+      {
+        method: "POST",
+        body: JSON.stringify({ max_claims: maxClaims }),
+      },
+    );
   },
 
   approveClaim(claimId: number, reviewerNotes?: string) {
