@@ -51,12 +51,11 @@ flowchart LR
 ## Screenshots
 
 <!-- Capture from the live dashboard and drop into docs/screenshots/ -->
-<!--
+
 ![Overview](docs/screenshots/overview.png)
 ![Evidence Explorer](docs/screenshots/evidence.png)
 ![Review Queue](docs/screenshots/review-queue.png)
 ![Research Report](docs/screenshots/report.png)
--->
 
 *(Screenshots and a short demo video of the analyst workflow — extract →
 review → promote → publish — are being added.)*
