@@ -1,14 +1,77 @@
 # Earnings Intelligence OS
 
-A research platform for semiconductor earnings: a Python backend that monitors
-SEC EDGAR, parses and chunks filings, extracts evidence-linked draft claims,
-and requires human review before claims reach trusted outputs — plus a Next.js
-analyst dashboard that drives the review workflow through a FastAPI service.
+**An evidence-grounded equity research platform for semiconductor earnings —
+where AI drafts and humans approve.**
 
-**Live MVP:**
+The system monitors SEC EDGAR for five semiconductor companies (NVDA, AMD,
+AVGO, QCOM, INTC), ingests and chunks every new filing, and uses an LLM to
+draft research claims — but every claim must literally quote its SEC source,
+sit in a human review queue, and be explicitly approved before it can appear
+in any published brief or research report. The result: AI-speed research with
+audit-grade provenance, down to the chunk ID and SEC URL behind every sentence.
 
-* Dashboard (Vercel): <https://earnings-intelligence-os.vercel.app>
-* API (Render): <https://earnings-intelligence-os-api.onrender.com>
+**Live:**
+
+* 📊 Dashboard: <https://earnings-intelligence-os.vercel.app>
+* 🔌 Research API: <https://earnings-intelligence-os-api.onrender.com> ([docs](https://earnings-intelligence-os-api.onrender.com/docs))
+* 🧭 Methodology: <https://earnings-intelligence-os.vercel.app/about>
+
+## Why it's built this way
+
+LLMs read filings brilliantly and hallucinate confidently. This project treats
+that as a governance problem, not a prompting problem:
+
+* **Grounding enforced in code** — an extracted claim is rejected unless its
+  supporting excerpt is a literal substring of a source-document chunk.
+* **Human approval gate** — AI output is quarantined as drafts; only an
+  analyst can promote a claim into the trusted layer.
+* **Deterministic publishing** — briefs and reports are assembled
+  arithmetically from trusted claims, audited fundamentals, and dated
+  valuation snapshots. No AI in the publishing step; no forecasts, price
+  targets, or ratings ever.
+* **Versioned everything** — reports, briefs, and narratives are never
+  overwritten; provenance (chunk IDs, packet hashes, source-report lineage)
+  is preserved end to end.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    EDGAR[SEC EDGAR] -->|GitHub Actions cron| ING[Python ingestion<br/>download · parse · chunk]
+    ING --> DB[(Supabase Postgres<br/>+ private Storage)]
+    DB -->|analyst-triggered| LLM[Gemini extraction<br/>literal-excerpt grounding]
+    LLM -->|drafts only| RQ[Human review queue]
+    RQ -->|approve / edit / reject| TRUST[Trusted claims]
+    TRUST --> PUB[Deterministic briefs<br/>& research reports]
+    DB <--> API[FastAPI on Render<br/>public reads · token-gated writes]
+    API <--> FE[Next.js terminal on Vercel]
+    SKILL[Claude Code skill<br/>narrative drafts] -->|import as draft| RQ2[Narrative review] --> PUB
+```
+
+## Screenshots
+
+<!-- Capture from the live dashboard and drop into docs/screenshots/ -->
+<!--
+![Overview](docs/screenshots/overview.png)
+![Evidence Explorer](docs/screenshots/evidence.png)
+![Review Queue](docs/screenshots/review-queue.png)
+![Research Report](docs/screenshots/report.png)
+-->
+
+*(Screenshots and a short demo video of the analyst workflow — extract →
+review → promote → publish — are being added.)*
+
+## Built with AI, governed like research
+
+This project was built end to end by one person using AI development tools —
+scoped and planned with ChatGPT, implemented in Claude Code pair-programming
+sessions, with a custom reusable Claude Code skill
+(`/semiconductor-equity-research-report`) that drafts report narratives from
+exported trusted-data packets under strict guardrails (no invented forecasts,
+ratings, or price targets; chunk-level citations required; output labelled as
+a draft and routed through the same human review queue as everything else).
+The same rule applied to building and using the product: AI accelerates,
+a human owns the result.
 
 ## Repository layout
 

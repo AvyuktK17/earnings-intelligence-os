@@ -56,6 +56,10 @@ const GROUPS: NavGroup[] = [
       },
     ],
   },
+  {
+    label: "Project",
+    links: [{ href: "/about", label: "About & Methodology" }],
+  },
 ];
 
 function defaultMatch(pathname: string, href: string): boolean {
