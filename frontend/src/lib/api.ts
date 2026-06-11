@@ -733,6 +733,39 @@ export const api = {
     return request<EvidenceDetail>(`/evidence/${claimId}`);
   },
 
+  /**
+   * Admin-only: correct the wording and/or excerpt of a promoted trusted
+   * claim. A corrected excerpt must be a literal quote from the claim's
+   * source chunk — the backend re-validates the grounding rule.
+   */
+  editEvidenceClaim(
+    claimId: number,
+    changes: {
+      editedClaimText?: string;
+      editedSupportingExcerpt?: string;
+      reviewerNotes?: string;
+    },
+  ) {
+    return request<{
+      qualitative_claim_id: number;
+      ticker: string;
+      theme: string | null;
+      previous_claim: string;
+      claim: string;
+      previous_supporting_excerpt: string | null;
+      supporting_excerpt: string | null;
+      source_reference: string | null;
+      corrected_at: string;
+    }>(`/evidence/${claimId}/edit`, {
+      method: "POST",
+      body: JSON.stringify({
+        edited_claim_text: changes.editedClaimText || null,
+        edited_supporting_excerpt: changes.editedSupportingExcerpt || null,
+        reviewer_notes: changes.reviewerNotes || null,
+      }),
+    });
+  },
+
   getReports(params?: {
     ticker?: string;
     report_type?: string;

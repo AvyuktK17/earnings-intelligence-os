@@ -7,11 +7,11 @@ import {
   type EvidenceDetail,
   type EvidenceItem,
 } from "@/lib/api";
-import { ErrorBox, Loading, Panel } from "@/components/Panel";
+import { ErrorBox, Loading, Panel, SuccessNote } from "@/components/Panel";
 import ResearchHeader from "@/components/ResearchHeader";
 import { SourceBadge } from "@/components/Badges";
 import { EmptyState, LoadingSkeleton } from "@/components/States";
-import { useCompanies } from "@/lib/hooks";
+import { useAdminToken, useCompanies } from "@/lib/hooks";
 
 const CLAIM_TYPES = ["", "factual", "interpretive"];
 const CONFIDENCES = ["", "high", "medium", "low"];
@@ -44,8 +44,168 @@ function ReviewedBadge({ value }: { value: boolean | string | null }) {
   );
 }
 
+/**
+ * Admin-only correction modal. Shows the claim's identity, status, and
+ * immutable source excerpt directly above the editable wording so the
+ * analyst can compare the revision against the quote before saving. Only
+ * the claim text is sent — the excerpt and provenance cannot be edited.
+ */
+function EditClaimModal({
+  item,
+  onClose,
+  onSaved,
+}: {
+  item: EvidenceItem;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+}) {
+  const [text, setText] = useState(item.claim);
+  const [excerpt, setExcerpt] = useState(item.supporting_excerpt ?? "");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const textChanged = text.trim() !== item.claim;
+  const excerptChanged =
+    excerpt.trim() !== (item.supporting_excerpt ?? "").trim();
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.editEvidenceClaim(item.qualitative_claim_id, {
+        editedClaimText: textChanged ? text.trim() : undefined,
+        editedSupportingExcerpt: excerptChanged ? excerpt.trim() : undefined,
+        reviewerNotes: notes.trim() || undefined,
+      });
+      onSaved(
+        `Claim #${item.qualitative_claim_id} corrected. The original wording is preserved in the audit trail.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Correction failed.");
+      setBusy(false);
+    }
+  }
+
+  const fieldClass =
+    "w-full rounded border border-edge bg-surface-raised px-2 py-1.5 text-[13px] " +
+    "text-foreground placeholder-faint focus:border-accent focus:outline-none";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Edit claim ${item.qualitative_claim_id}`}
+    >
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-md border border-edge bg-surface p-4 shadow-lg">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline pb-2 font-mono text-[11px] text-muted">
+          <span className="text-[12px] font-semibold uppercase tracking-wider text-foreground">
+            Edit claim
+          </span>
+          <span>claim #{item.qualitative_claim_id}</span>
+          <span className="font-medium text-accent">{item.ticker}</span>
+          <span>{item.accession_number ?? "—"}</span>
+          <span>chunk {item.source_chunk_id ?? "—"}</span>
+          <span className="rounded border border-positive/40 px-1.5 text-positive">
+            trusted · human reviewed
+          </span>
+        </div>
+
+        <div className="mt-3 space-y-3">
+          <div>
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-faint">
+              Current excerpt
+            </div>
+            <blockquote className="border-l-2 border-accent/40 pl-2.5 text-[12.5px] italic leading-relaxed text-muted">
+              “{item.supporting_excerpt ?? "—"}”
+            </blockquote>
+          </div>
+
+          <div>
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-faint">
+              Current claim text
+            </div>
+            <p className="text-[12.5px] leading-relaxed text-muted">
+              {item.claim}
+            </p>
+          </div>
+
+          <label className="block">
+            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-faint">
+              Corrected claim text — verify every figure against the excerpt
+            </span>
+            <textarea
+              className={`${fieldClass} min-h-24 font-sans`}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-faint">
+              Corrected excerpt (optional) — must be an exact quote from the
+              source chunk; the API rejects anything that isn&apos;t
+            </span>
+            <textarea
+              className={`${fieldClass} min-h-16 font-sans italic`}
+              value={excerpt}
+              onChange={(e) => setExcerpt(e.target.value)}
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-faint">
+              Reviewer notes (optional — why the correction was needed)
+            </span>
+            <input
+              className={fieldClass}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="e.g. growth figure corrected to match the excerpt"
+            />
+          </label>
+
+          {error && <ErrorBox message={error} />}
+
+          <div className="flex gap-2 pt-1">
+            <button
+              disabled={
+                busy ||
+                !text.trim() ||
+                !excerpt.trim() ||
+                (!textChanged && !excerptChanged)
+              }
+              className="rounded border border-positive/50 px-2.5 py-1 text-[12px] font-medium text-positive transition-colors hover:bg-positive/10 disabled:opacity-50"
+              onClick={save}
+            >
+              {busy ? "Saving…" : "Save correction"}
+            </button>
+            <button
+              disabled={busy}
+              className="rounded border border-edge px-2.5 py-1 text-[12px] font-medium text-muted transition-colors hover:bg-surface-raised disabled:opacity-50"
+              onClick={onClose}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Right pane: the selected claim with excerpt, provenance chain, source chunk. */
-function ClaimDetail({ item }: { item: EvidenceItem }) {
+function ClaimDetail({
+  item,
+  canEdit,
+  onSaved,
+}: {
+  item: EvidenceItem;
+  canEdit: boolean;
+  onSaved: (message: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
   const [detail, setDetail] = useState<EvidenceDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +245,26 @@ function ClaimDetail({ item }: { item: EvidenceItem }) {
         <span className="ml-auto font-mono text-[11px] text-faint">
           claim #{item.qualitative_claim_id}
         </span>
+        {canEdit && (
+          <button
+            className="rounded border border-accent/50 px-2 py-0.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/10"
+            onClick={() => setEditing(true)}
+          >
+            Edit claim
+          </button>
+        )}
       </div>
+
+      {editing && (
+        <EditClaimModal
+          item={item}
+          onClose={() => setEditing(false)}
+          onSaved={(message) => {
+            setEditing(false);
+            onSaved(message);
+          }}
+        />
+      )}
 
       <p className="text-[13.5px] leading-relaxed text-foreground">
         {item.claim}
@@ -147,10 +326,13 @@ function ClaimDetail({ item }: { item: EvidenceItem }) {
 function EvidenceExplorer() {
   const searchParams = useSearchParams();
   const companies = useCompanies();
+  const adminToken = useAdminToken();
   const [items, setItems] = useState<EvidenceItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [ticker, setTicker] = useState(searchParams.get("ticker") ?? "");
   const [theme, setTheme] = useState("");
@@ -183,7 +365,7 @@ function EvidenceExplorer() {
     return () => {
       cancelled = true;
     };
-  }, [ticker, theme, claimType, confidence]);
+  }, [ticker, theme, claimType, confidence, reloadKey]);
 
   // Theme options derived from whatever is currently loaded.
   const themes = useMemo(() => {
@@ -223,6 +405,7 @@ function EvidenceExplorer() {
         description="Trusted, human-reviewed claims linked to the exact SEC filing chunk they were grounded in. Pending, rejected, and ungrounded drafts never appear here."
       />
 
+      {flash && <SuccessNote message={flash} />}
       {error && <ErrorBox message={error} />}
       {loading && !error && <LoadingSkeleton rows={6} />}
 
@@ -358,7 +541,14 @@ function EvidenceExplorer() {
           {/* Right: selected claim detail */}
           <Panel title="Selected claim">
             {selected ? (
-              <ClaimDetail item={selected} />
+              <ClaimDetail
+                item={selected}
+                canEdit={Boolean(adminToken)}
+                onSaved={(message) => {
+                  setFlash(message);
+                  setReloadKey((k) => k + 1);
+                }}
+              />
             ) : (
               <p className="py-6 text-center text-[12px] text-faint">
                 Select a claim to view its excerpt, provenance chain, and source

@@ -24,6 +24,7 @@ from src.brief_storage import generate_and_store_earnings_brief
 from src.claim_promotion import promote_reviewed_claims
 from src.claim_review import approve_claim, approve_claim_with_edits, reject_claim
 from src.database import get_supabase_client
+from src.evidence_correction import correct_trusted_claim
 from src.research_report_storage import generate_and_store_research_report
 from src.claude_narrative_import import REQUIRED_LABEL, insert_claude_draft
 from src.research_report_review import (
@@ -166,6 +167,7 @@ _NOT_FOUND_PREFIXES = (
     "No filing found",
     "No monitored company found",
     "No research report found",
+    "No trusted evidence claim found",
 )
 
 # Public stand-in for claim_extraction_error: the raw provider text stays in
@@ -211,6 +213,14 @@ class ReviewNotesRequest(BaseModel):
 
 class EditClaimRequest(BaseModel):
     edited_claim_text: str = Field(min_length=1)
+    reviewer_notes: str | None = None
+
+
+class EvidenceCorrectionRequest(BaseModel):
+    """Post-promotion correction: wording and/or excerpt, at least one."""
+
+    edited_claim_text: str | None = None
+    edited_supporting_excerpt: str | None = None
     reviewer_notes: str | None = None
 
 
@@ -905,6 +915,29 @@ def get_evidence(claim_id: int) -> dict:
         "filing": filing,
         "sec_url": (filing or {}).get("sec_url"),
     }
+
+
+@app.post(
+    "/evidence/{claim_id}/edit", dependencies=[Depends(require_admin_token)]
+)
+def edit_evidence_claim(claim_id: int, body: EvidenceCorrectionRequest) -> dict:
+    """Correct the wording and/or excerpt of a promoted trusted claim.
+
+    Admin-only. A corrected excerpt is accepted only if it is a literal
+    quote from the claim's own source chunk (whitespace-normalized — the
+    same grounding rule extraction enforces); the chunk reference and all
+    other provenance fields are immutable. The source proposed_claims row
+    keeps the original wording and excerpt as the audit trail.
+    """
+    try:
+        return correct_trusted_claim(
+            claim_id,
+            edited_claim_text=body.edited_claim_text,
+            reviewer_notes=body.reviewer_notes,
+            edited_supporting_excerpt=body.edited_supporting_excerpt,
+        )
+    except ValueError as exc:
+        raise _http_error(exc)
 
 
 # --- Research reports (deterministic, versioned) -------------------------
