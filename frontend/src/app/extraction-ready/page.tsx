@@ -9,9 +9,10 @@ import {
   type ExtractionReadyFiling,
   type ExtractionReadyResponse,
 } from "@/lib/api";
-import { ErrorBox, SuccessNote } from "@/components/Panel";
-import StatusBadge from "@/components/StatusBadge";
+import { ErrorBox, Panel, SuccessNote } from "@/components/Panel";
+import StatusPill from "@/components/StatusPill";
 import ResearchHeader from "@/components/ResearchHeader";
+import { DataTable, TH, THead, TR, TD } from "@/components/DataTable";
 import { EmptyState, LoadingSkeleton } from "@/components/States";
 
 interface Notice {
@@ -26,11 +27,11 @@ const STAGE_ACTIVE_STYLES: Record<string, string> = {
   approved: "text-positive font-semibold",
 };
 
+/** Compact claim-extraction lifecycle trail; failures keep the loud pill. */
 function LifecycleTrail({ status }: { status: string }) {
-  // Failures sit outside the happy path and keep the loud badge.
-  if (status === "failed") return <StatusBadge status="failed" />;
+  if (status === "failed") return <StatusPill status="failed" />;
   return (
-    <span className="flex items-center gap-1 font-mono text-[11px]">
+    <span className="flex items-center gap-1 whitespace-nowrap font-mono text-[10.5px]">
       {LIFECYCLE_STAGES.map((stage, i) => (
         <span key={stage} className="flex items-center gap-1">
           {i > 0 && <span className="text-faint">›</span>}
@@ -39,7 +40,7 @@ function LifecycleTrail({ status }: { status: string }) {
               stage === status ? STAGE_ACTIVE_STYLES[stage] : "text-faint"
             }
           >
-            {stage}
+            {stage.replace(/_/g, " ")}
           </span>
         </span>
       ))}
@@ -47,7 +48,10 @@ function LifecycleTrail({ status }: { status: string }) {
   );
 }
 
-function FilingCard({
+const actionBtn =
+  "rounded border px-2 py-0.5 text-[11px] font-medium transition-colors disabled:opacity-50";
+
+function FilingRow({
   filing,
   busy,
   notice,
@@ -62,134 +66,140 @@ function FilingCard({
   onPromote: (ticker: string, accessionNumber: string) => void;
   onGenerateBrief: (ticker: string, accessionNumber: string) => void;
 }) {
-  // The terminal lifecycle step: every grounded draft is reviewed (nothing
-  // pending), so the Review Queue no longer shows this filing — promotion
-  // must be reachable from here or the filing stays pending_review forever.
+  // Terminal lifecycle step: every grounded draft is reviewed (nothing
+  // pending), so the Review Queue no longer lists this filing — promotion
+  // must be reachable here or it stays pending_review forever.
   const needsTerminalPromotion =
     filing.claim_extraction_status === "pending_review" &&
     filing.pending_grounded_claim_count === 0;
 
-  // An approved filing with trusted claims but no stored brief can have its
-  // first version generated right here instead of through Swagger.
+  // Approved filing with trusted claims but no stored brief: generate v1 here.
   const needsFirstBrief =
     filing.claim_extraction_status === "approved" &&
     filing.trusted_promoted_claim_count > 0 &&
     filing.latest_brief_version == null;
 
+  const hasBrief =
+    filing.claim_extraction_status === "approved" &&
+    filing.latest_brief_version != null;
+
+  // A failed extraction shows the API's safe, redacted error; any notice from
+  // an action renders in a full-width sub-row so the dense table stays aligned.
+  const subRow =
+    notice ||
+    (filing.claim_extraction_status === "failed" &&
+      filing.claim_extraction_error);
+
   return (
-    <div className="rounded-md border border-edge bg-surface p-4">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="font-mono text-[13px] font-semibold text-accent">
-          {filing.ticker}
-        </span>
-        <Link
-          href={`/filings/${encodeURIComponent(filing.accession_number)}`}
-          className="font-mono text-[12px] text-info hover:text-accent hover:underline"
-        >
-          {filing.accession_number}
-        </Link>
-        <span className="font-mono text-[12px] text-muted">
-          filed {filing.filing_date ?? "—"}
-        </span>
-        <span className="ml-auto flex items-center gap-2.5">
-          <StatusBadge status={filing.exhibit_processing_status} />
+    <>
+      <TR hover={!subRow}>
+        <TD mono className="font-medium">
+          <Link
+            href={`/companies/${encodeURIComponent(filing.ticker)}`}
+            className="text-accent hover:underline"
+          >
+            {filing.ticker}
+          </Link>
+        </TD>
+        <TD mono>
+          <Link
+            href={`/filings/${encodeURIComponent(filing.accession_number)}`}
+            className="text-info hover:underline"
+          >
+            {filing.accession_number}
+          </Link>
+        </TD>
+        <TD mono tone="muted">
+          {filing.filing_date ?? "—"}
+        </TD>
+        <TD mono tone="muted" className="max-w-[160px] truncate">
+          {filing.filename ?? "—"}
+        </TD>
+        <TD right mono>
+          {filing.chunk_count}
+        </TD>
+        <TD>
+          <StatusPill status={filing.exhibit_processing_status} />
+        </TD>
+        <TD>
           <LifecycleTrail status={filing.claim_extraction_status} />
-        </span>
-      </div>
-
-      <div className="mt-2 font-mono text-[12px] text-muted">
-        {filing.filename ?? "—"} · {filing.document_key ?? "—"} ·{" "}
-        {filing.chunk_count} chunks
-      </div>
-
-      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted">
-        <span>
-          drafts pending review:{" "}
-          <span className="font-mono text-foreground">
-            {filing.pending_grounded_claim_count}
-          </span>
-        </span>
-        <span>
-          trusted promoted:{" "}
-          <span className="font-mono text-foreground">
-            {filing.trusted_promoted_claim_count}
-          </span>
-        </span>
-        <span>
-          latest brief:{" "}
-          <span className="font-mono text-foreground">
-            {filing.latest_brief_version != null
-              ? `v${filing.latest_brief_version}`
-              : "—"}
-          </span>
-        </span>
-        {filing.claim_extraction_status === "approved" &&
-          filing.latest_brief_version != null && (
+        </TD>
+        <TD right mono tone={filing.pending_grounded_claim_count > 0 ? "accent" : "faint"}>
+          {filing.pending_grounded_claim_count}
+        </TD>
+        <TD right mono tone={filing.trusted_promoted_claim_count > 0 ? "positive" : "faint"}>
+          {filing.trusted_promoted_claim_count}
+        </TD>
+        <TD mono>
+          {hasBrief ? (
             <Link
               href={`/briefs/latest/${encodeURIComponent(filing.ticker)}`}
-              className="text-info hover:text-accent hover:underline"
+              className="text-info hover:underline"
             >
-              View latest brief →
+              v{filing.latest_brief_version}
             </Link>
-          )}
-      </div>
-
-      {/* The API redacts provider errors to a safe generic sentence. */}
-      {filing.claim_extraction_status === "failed" &&
-        filing.claim_extraction_error && (
-          <div className="mt-3">
-            <ErrorBox message={filing.claim_extraction_error} />
-          </div>
-        )}
-
-      {notice && (
-        <div className="mt-3">
-          {notice.kind === "success" ? (
-            <div className="space-y-1">
-              <SuccessNote message={notice.text} />
-              <Link
-                href="/review-queue"
-                className="inline-block text-[12px] text-info hover:text-accent hover:underline"
-              >
-                Review drafted claims →
-              </Link>
-            </div>
           ) : (
-            <ErrorBox message={notice.text} />
+            <span className="text-faint">—</span>
           )}
-        </div>
+        </TD>
+        <TD>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              className={`${actionBtn} border-accent/50 text-accent hover:bg-accent/10`}
+              disabled={busy}
+              onClick={() => onExtract(filing.accession_number)}
+            >
+              {busy ? "…" : "Extract"}
+            </button>
+            {needsTerminalPromotion && (
+              <button
+                className={`${actionBtn} border-positive/50 text-positive hover:bg-positive/10`}
+                disabled={busy}
+                onClick={() => onPromote(filing.ticker, filing.accession_number)}
+              >
+                Promote
+              </button>
+            )}
+            {needsFirstBrief && (
+              <button
+                className={`${actionBtn} border-info/50 text-info hover:bg-info/10`}
+                disabled={busy}
+                onClick={() =>
+                  onGenerateBrief(filing.ticker, filing.accession_number)
+                }
+              >
+                Brief
+              </button>
+            )}
+          </div>
+        </TD>
+      </TR>
+      {subRow && (
+        <tr className="border-b border-hairline/60">
+          <td colSpan={11} className="pb-3">
+            {notice ? (
+              notice.kind === "success" ? (
+                <div className="space-y-1">
+                  <SuccessNote message={notice.text} />
+                  <Link
+                    href="/review-queue"
+                    className="inline-block text-[12px] text-info hover:text-accent hover:underline"
+                  >
+                    Review drafted claims →
+                  </Link>
+                </div>
+              ) : (
+                <ErrorBox message={notice.text} />
+              )
+            ) : (
+              filing.claim_extraction_error && (
+                <ErrorBox message={filing.claim_extraction_error} />
+              )
+            )}
+          </td>
+        </tr>
       )}
-
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          className="rounded border border-accent/50 px-2.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent/10 disabled:opacity-50"
-          disabled={busy}
-          onClick={() => onExtract(filing.accession_number)}
-        >
-          {busy ? "Extracting…" : "Extract Claims"}
-        </button>
-        {needsTerminalPromotion && (
-          <button
-            className="rounded border border-positive/50 px-2.5 py-1 text-[12px] font-medium text-positive transition-colors hover:bg-positive/10 disabled:opacity-50"
-            disabled={busy}
-            onClick={() => onPromote(filing.ticker, filing.accession_number)}
-          >
-            {busy ? "Working…" : "Promote reviewed claims"}
-          </button>
-        )}
-        {needsFirstBrief && (
-          <button
-            className="rounded border border-info/50 px-2.5 py-1 text-[12px] font-medium text-info transition-colors hover:bg-info/10 disabled:opacity-50"
-            disabled={busy}
-            onClick={() =>
-              onGenerateBrief(filing.ticker, filing.accession_number)
-            }
-          >
-            {busy ? "Working…" : "Generate first brief"}
-          </button>
-        )}
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -346,7 +356,7 @@ export default function ExtractionReadyPage() {
       />
 
       {error && <ErrorBox message={error} />}
-      {loading && !error && <LoadingSkeleton rows={4} withCards={false} />}
+      {loading && !error && <LoadingSkeleton rows={5} withCards={false} />}
 
       {!loading && !error && data && data.filings.length === 0 && (
         <EmptyState
@@ -356,19 +366,36 @@ export default function ExtractionReadyPage() {
       )}
 
       {!loading && !error && data && data.filings.length > 0 && (
-        <div className="space-y-3">
-          {data.filings.map((filing) => (
-            <FilingCard
-              key={filing.filing_id}
-              filing={filing}
-              busy={busyAccession === filing.accession_number}
-              notice={notices[filing.accession_number] ?? null}
-              onExtract={handleExtract}
-              onPromote={handlePromote}
-              onGenerateBrief={handleGenerateBrief}
-            />
-          ))}
-        </div>
+        <Panel title={`Extraction queue · ${data.filings.length}`}>
+          <DataTable minWidth={1100}>
+            <THead>
+              <TH>Ticker</TH>
+              <TH>Accession</TH>
+              <TH>Filed</TH>
+              <TH>Exhibit</TH>
+              <TH right>Chunks</TH>
+              <TH>Exhibit stage</TH>
+              <TH>Claim stage</TH>
+              <TH right>Pending</TH>
+              <TH right>Trusted</TH>
+              <TH>Brief</TH>
+              <TH>Action</TH>
+            </THead>
+            <tbody>
+              {data.filings.map((filing) => (
+                <FilingRow
+                  key={filing.filing_id}
+                  filing={filing}
+                  busy={busyAccession === filing.accession_number}
+                  notice={notices[filing.accession_number] ?? null}
+                  onExtract={handleExtract}
+                  onPromote={handlePromote}
+                  onGenerateBrief={handleGenerateBrief}
+                />
+              ))}
+            </tbody>
+          </DataTable>
+        </Panel>
       )}
     </div>
   );

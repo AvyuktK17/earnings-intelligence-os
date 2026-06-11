@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -14,40 +15,65 @@ import {
 } from "recharts";
 import { formatUSD } from "@/lib/format";
 
-// Terminal palette aligned with globals.css design tokens.
-const EDGE = "#1f2735";
-const MUTED = "#8b96a8";
-const ACCENT = "#e8b93e";
+/**
+ * Recharts needs concrete color strings, so structural chart colors (grid,
+ * axes, tooltip) are read from the live CSS design tokens and re-read whenever
+ * the OS appearance flips between light and dark. Series/ticker hues stay as
+ * stable brand colors that read on either background.
+ */
+function readToken(name: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
+  return value || fallback;
+}
+
+function useThemeColors() {
+  const [colors, setColors] = useState({
+    edge: "#1f2735",
+    muted: "#8b96a8",
+    accent: "#e8b93e",
+    surface: "#161c29",
+    foreground: "#d7dde8",
+  });
+
+  useEffect(() => {
+    function sync() {
+      setColors({
+        edge: readToken("--edge", "#1f2735"),
+        muted: readToken("--muted", "#8b96a8"),
+        accent: readToken("--accent", "#e8b93e"),
+        surface: readToken("--surface-raised", "#161c29"),
+        foreground: readToken("--foreground", "#d7dde8"),
+      });
+    }
+    sync();
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  return colors;
+}
 
 export const SERIES_COLORS = [
-  "#e8b93e", // accent
-  "#539bf5", // info
-  "#4cc38a", // positive
-  "#e5534b", // negative
-  "#a371f7", // violet
+  "#d99a1c", // accent (amber — readable on light or dark)
+  "#3b82f6", // info
+  "#10b981", // positive
+  "#ef4444", // negative
+  "#8b5cf6", // violet
 ];
 
 export const TICKER_COLORS: Record<string, string> = {
-  AMD: "#e5534b",
-  AVGO: "#e8b93e",
-  INTC: "#539bf5",
-  NVDA: "#4cc38a",
-  QCOM: "#a371f7",
+  AMD: "#ef4444",
+  AVGO: "#d99a1c",
+  INTC: "#3b82f6",
+  NVDA: "#10b981",
+  QCOM: "#8b5cf6",
 };
 
-const AXIS = { fontSize: 11, fill: MUTED } as const;
-
 type ValueFormatter = (value: number) => string;
-
-function tooltipStyle() {
-  return {
-    backgroundColor: "#161c29",
-    border: `1px solid ${EDGE}`,
-    borderRadius: 6,
-    fontSize: 12,
-    color: "#d7dde8",
-  };
-}
 
 /** Multi-line trend over fiscal periods. `data` rows are keyed by `period`. */
 export function TrendLineChart({
@@ -61,6 +87,15 @@ export function TrendLineChart({
   format?: ValueFormatter;
   height?: number;
 }) {
+  const theme = useThemeColors();
+  const axis = { fontSize: 11, fill: theme.muted } as const;
+  const tooltip = {
+    backgroundColor: theme.surface,
+    border: `1px solid ${theme.edge}`,
+    borderRadius: 6,
+    fontSize: 12,
+    color: theme.foreground,
+  };
   if (!data.length) {
     return (
       <div className="py-10 text-center text-[12px] text-faint">
@@ -71,17 +106,17 @@ export function TrendLineChart({
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 6, right: 12, bottom: 0, left: 4 }}>
-        <CartesianGrid stroke={EDGE} strokeDasharray="2 4" vertical={false} />
-        <XAxis dataKey="period" tick={AXIS} tickLine={false} axisLine={{ stroke: EDGE }} />
+        <CartesianGrid stroke={theme.edge} strokeDasharray="2 4" vertical={false} />
+        <XAxis dataKey="period" tick={axis} tickLine={false} axisLine={{ stroke: theme.edge }} />
         <YAxis
-          tick={AXIS}
+          tick={axis}
           tickLine={false}
-          axisLine={{ stroke: EDGE }}
+          axisLine={{ stroke: theme.edge }}
           width={56}
           tickFormatter={(v) => format(Number(v))}
         />
         <Tooltip
-          contentStyle={tooltipStyle()}
+          contentStyle={tooltip}
           formatter={(value) => format(Number(value))}
         />
         {lines.map((line, index) => (
@@ -113,6 +148,15 @@ export function PeerBarChart({
   highlightTicker?: string;
   height?: number;
 }) {
+  const theme = useThemeColors();
+  const axis = { fontSize: 11, fill: theme.muted } as const;
+  const tooltip = {
+    backgroundColor: theme.surface,
+    border: `1px solid ${theme.edge}`,
+    borderRadius: 6,
+    fontSize: 12,
+    color: theme.foreground,
+  };
   const rows = data.filter((d) => d.value != null);
   if (!rows.length) {
     return (
@@ -128,25 +172,25 @@ export function PeerBarChart({
         data={rows}
         margin={{ top: 4, right: 16, bottom: 0, left: 4 }}
       >
-        <CartesianGrid stroke={EDGE} strokeDasharray="2 4" horizontal={false} />
+        <CartesianGrid stroke={theme.edge} strokeDasharray="2 4" horizontal={false} />
         <XAxis
           type="number"
-          tick={AXIS}
+          tick={axis}
           tickLine={false}
-          axisLine={{ stroke: EDGE }}
+          axisLine={{ stroke: theme.edge }}
           tickFormatter={(v) => format(Number(v))}
         />
         <YAxis
           type="category"
           dataKey="ticker"
-          tick={AXIS}
+          tick={axis}
           tickLine={false}
-          axisLine={{ stroke: EDGE }}
+          axisLine={{ stroke: theme.edge }}
           width={52}
         />
         <Tooltip
-          cursor={{ fill: "#ffffff08" }}
-          contentStyle={tooltipStyle()}
+          cursor={{ fill: theme.edge, fillOpacity: 0.25 }}
+          contentStyle={tooltip}
           formatter={(value) => format(Number(value))}
         />
         <Bar dataKey="value" radius={[0, 3, 3, 0]} barSize={18}>
@@ -155,8 +199,8 @@ export function PeerBarChart({
               key={row.ticker}
               fill={
                 highlightTicker && row.ticker === highlightTicker
-                  ? ACCENT
-                  : TICKER_COLORS[row.ticker] ?? MUTED
+                  ? theme.accent
+                  : TICKER_COLORS[row.ticker] ?? theme.muted
               }
             />
           ))}

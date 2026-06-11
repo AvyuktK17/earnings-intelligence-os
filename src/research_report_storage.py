@@ -27,12 +27,16 @@ from src.storage import upload_file
 _LOCAL_DIR = "output/reports"
 
 # Neutral institutional palette (no copied branding). Dark slate ink and muted
-# rules keep the note legible and restrained, not consumer-flashy.
+# rules keep the note legible and restrained, not consumer-flashy. A single
+# restrained amber accent (matching the web terminal's primary accent) marks
+# section ticks, the masthead rule, and evidence quotes — nothing else.
 _BRAND = "Earnings Intelligence OS Research"
 _INK = (26, 31, 39)
 _SLATE = (40, 52, 74)
 _GRAY = (110, 120, 135)
 _RULE = (188, 195, 206)
+_ACCENT = (163, 92, 0)
+_ACCENT_FILL = (250, 244, 232)
 _HEADER_FILL = (40, 52, 74)
 _ZEBRA = (244, 246, 249)
 _DISCLAIMER = (
@@ -129,19 +133,50 @@ def _render_table(pdf: "_ResearchPDF", headers: list, rows: list) -> None:
 
 def _render_blocks(pdf: "_ResearchPDF", blocks: list) -> None:
     width = pdf.w - pdf.l_margin - pdf.r_margin
+    # The first h1 is the brand line; the running header already carries the
+    # brand, so render it as a restrained masthead eyebrow and let the company
+    # name (the following h2) become the dominant first-page title.
+    first_h1 = True
+    first_h2 = True
     for block in blocks:
         kind = block[0]
         if kind == "h1":
-            pdf.set_font("Helvetica", "B", 16)
-            pdf.set_text_color(*_SLATE)
-            pdf.multi_cell(0, 7, _latin1_safe(block[1]),
-                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.ln(0.5)
+            if first_h1:
+                first_h1 = False
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_text_color(*_ACCENT)
+                pdf.cell(0, 5, _latin1_safe(block[1].upper()),
+                         new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_draw_color(*_ACCENT)
+                pdf.set_line_width(0.7)
+                y = pdf.get_y() + 0.6
+                pdf.line(pdf.l_margin, y, pdf.l_margin + 26, y)
+                pdf.ln(2.4)
+            else:
+                pdf.set_font("Helvetica", "B", 16)
+                pdf.set_text_color(*_SLATE)
+                pdf.multi_cell(0, 7, _latin1_safe(block[1]),
+                               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.ln(0.5)
         elif kind == "h2":
+            if first_h2:
+                # The cover company title — the dominant first-page element.
+                first_h2 = False
+                pdf.set_font("Helvetica", "B", 17)
+                pdf.set_text_color(*_INK)
+                pdf.multi_cell(0, 7.5, _latin1_safe(block[1]),
+                               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.ln(0.4)
+                continue
             pdf.ln(2)
+            # Accent tick + section title, then a full-width hairline rule.
+            y0 = pdf.get_y()
+            pdf.set_fill_color(*_ACCENT)
+            pdf.rect(pdf.l_margin, y0 + 0.6, 1.6, 4.4, style="F")
+            pdf.set_x(pdf.l_margin + 4)
             pdf.set_font("Helvetica", "B", 11.5)
             pdf.set_text_color(*_SLATE)
-            pdf.multi_cell(0, 6, _latin1_safe(block[1]),
+            pdf.multi_cell(width - 4, 6, _latin1_safe(block[1]),
                            new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.set_draw_color(*_RULE)
             pdf.set_line_width(0.3)
@@ -161,14 +196,29 @@ def _render_blocks(pdf: "_ResearchPDF", blocks: list) -> None:
                            new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.ln(1.5)
         elif kind == "kv":
+            pairs = block[1]
+            line_h = 4.9
+            pad = 2.2
+            box_h = len(pairs) * line_h + pad * 2
+            # Keep the metadata panel intact across a page break.
+            if pdf.get_y() + box_h > pdf.page_break_trigger:
+                pdf.add_page()
+            y0 = pdf.get_y()
+            pdf.set_fill_color(*_ACCENT_FILL)
+            pdf.rect(pdf.l_margin, y0, width, box_h, style="F")
+            pdf.set_fill_color(*_ACCENT)
+            pdf.rect(pdf.l_margin, y0, 1.4, box_h, style="F")
+            pdf.set_xy(pdf.l_margin + 5, y0 + pad)
             pdf.set_text_color(*_INK)
-            for key, value in block[1]:
+            for key, value in pairs:
+                pdf.set_x(pdf.l_margin + 5)
                 pdf.set_font("Helvetica", "B", 9)
-                pdf.write(4.6, _latin1_safe(f"{key}: "))
+                pdf.cell(34, line_h, _latin1_safe(f"{key}"))
                 pdf.set_font("Helvetica", "", 9)
-                pdf.write(4.6, _latin1_safe(str(value)))
-                pdf.ln(4.8)
-            pdf.ln(1.5)
+                pdf.multi_cell(width - 40, line_h, _latin1_safe(str(value)),
+                               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.set_y(y0 + box_h)
+            pdf.ln(2.5)
         elif kind == "bullets":
             pdf.set_font("Helvetica", "", 9)
             pdf.set_text_color(*_INK)
@@ -187,8 +237,8 @@ def _render_blocks(pdf: "_ResearchPDF", blocks: list) -> None:
             pdf.set_x(pdf.l_margin + 4)
             pdf.multi_cell(width - 4, 4.4, _latin1_safe(block[1]),
                            new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.set_draw_color(*_RULE)
-            pdf.set_line_width(0.8)
+            pdf.set_draw_color(*_ACCENT)
+            pdf.set_line_width(0.9)
             pdf.line(pdf.l_margin + 1, y_start, pdf.l_margin + 1, pdf.get_y() - 1)
             pdf.ln(1.5)
         elif kind == "table":

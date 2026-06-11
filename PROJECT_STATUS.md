@@ -747,6 +747,112 @@ deterministic report `/pdf` route still 307-redirects to a signed URL, while
 Claude-assisted reports (no PDF) correctly 404. Next milestone: **Bundle C final
 QA** (portfolio screenshots and demo video, deferred).
 
+## v0 institutional terminal redesign — Phase B (Bundle C2, complete)
+
+A frontend-only redesign plus a deterministic-PDF rendering polish. **No backend
+logic, API contracts, Supabase schema, secrets, GitHub Actions, or LLM usage
+changed** — the only Python touched is the PDF rendering path in
+`src/research_report_storage.py`. Phase A (the `/`, `/peers`,
+`/companies/[ticker]`, `/evidence` screens and the shared components/tokens)
+was already committed as `Port v0 design language into core research screens`
+and was not redone.
+
+### OS-driven light/dark theme
+
+`frontend/src/app/globals.css` now follows the operating-system appearance
+automatically. `:root` defines a **light-default** token set (white background,
+light neutral surfaces, dark primary text, subtle gray borders, restrained
+amber primary accent darkened for AA contrast on white) and a
+`@media (prefers-color-scheme: dark)` block restores the established v0
+near-black terminal palette. The existing token *names* (`--background`,
+`--surface`, `--foreground`, `--edge`, `--hairline`, `--accent`, …) are kept so
+every shared component adapts with no markup changes; hairlines flip from
+white-alpha (dark) to dark-alpha (light). `color-scheme` is set per theme so
+native form controls and scrollbars follow suit. There is **no manual theme
+switcher** in this phase. Semantic colors are preserved across both themes:
+green positive/approved, red negative/rejected/failed, amber/yellow
+pending/warning, blue SEC/informational, purple Claude-assisted/AI. The frontend
+has zero hard-coded `white`/`black`/palette colors (verified by grep); the only
+literal hexes are recharts series/ticker brand hues. `src/components/charts.tsx`
+reads the live CSS tokens for grid/axis/tooltip colors and re-reads them on a
+`prefers-color-scheme` change, so charts render correctly in both themes.
+
+### Workflow pages
+
+- `/filings` — dense `FilingsTable` (ticker → company link, form, filed, report
+  date, accession → detail link, processing-status pill) with ticker/status/
+  limit filters; exhibit and claim-extraction status are intentionally **not**
+  added here because `GET /filings` does not expose them (they live on
+  `GET /extraction-ready`) and the API contract is preserved.
+- `/filings/[accessionNumber]` — compact provenance panels: filing metadata
+  (ticker, form, dates, accession, SEC link, processing lifecycle, chunk count),
+  processing-error surface, and an ingested-documents table with HTML/text
+  Storage flags.
+- `/extraction-ready` — **converted from oversized cards into a dense action
+  table** (Ticker · Accession · Filed · Exhibit · Chunks · Exhibit stage · Claim
+  stage · Pending · Trusted · Brief · Action). All protected actions are
+  preserved unchanged (Extract Claims, Promote reviewed claims, Generate first
+  brief, View latest brief), gated on a saved admin token, with per-row busy
+  state and a full-width sub-row for success/error notices and the API's
+  redacted extraction error. No batch extraction; no backend behavior change.
+- `/review-queue` — grounded pending claims grouped by filing with source
+  excerpt, chunk/accession/document-key provenance, theme, confidence, and the
+  Approve / Edit-and-Approve / Reject flow plus scoped per-filing promotion
+  (admin-token-gated, grounded-only).
+- `/briefs/latest/[ticker]` — ticker tabs, brief metadata cards (version,
+  trusted/factual/interpretive counts), rendered intelligence-note markdown,
+  and the version-generation control. No PDF button (briefs have no PDF route).
+
+### Report pages
+
+- `/reports` — **regrouped by ticker**: each company group shows the latest
+  visible report prominently (det/Claude badge, status, type, generated date,
+  claim & metric counts, PDF link only when available, view action) with prior
+  versions in a collapsible subordinate table. Public hiding of draft / rejected
+  / superseded / failed reports is enforced by the unchanged backend.
+- `/reports/latest/[ticker]` — ticker tabs, professional header, report-type +
+  deterministic/Claude badge, review status, version selector, generated date,
+  valuation-snapshot disclosure, source-report lineage, **Download PDF only when
+  a PDF exists** (Claude-assisted reports correctly show none), evidence-link
+  panel, and admin-only version generation.
+- `/reports/review` — admin-token-gated narrative-review queue (draft-only):
+  ticker, type, version, imported date, source report id, packet-hash preview,
+  claim/evidence counts, rendered markdown preview, reviewer notes, and the
+  Approve / Edit-and-Approve / Reject / Skip actions; edit-and-approve preserves
+  the original draft immutably.
+
+### Deterministic PDF rendering polish
+
+`src/research_report_storage.py` keeps rendering the report's intermediate
+**block model** natively via `_ResearchPDF(FPDF)` (no HTML re-parse) and stays
+pure-Python `fpdf2` (built-in fonts only, no external font files, private
+Storage, signed URLs, latin-1 transliteration only where the core font
+requires). Rendering refinements only (the report-generation logic is
+unchanged): the first brand `h1` becomes a restrained accent **masthead
+eyebrow** (the running header already carries the brand) so the company name —
+the first `h2` — renders as the dominant first-page title; the report-metadata
+`kv` block renders in an **accent-tinted panel** with a left accent bar; section
+headers gain a small **accent tick** before the hairline rule; and evidence
+quotes use an **accent left rule**. Executive-summary section, hierarchical
+financial tables with a shaded header + zebra rows, numbered evidence claims,
+source appendix, methodology section, page numbers, and the disclaimer footer
+are retained. Validated read-only against the real AVGO block model (valid
+`%PDF` … `%%EOF`, 52 blocks, no DB writes); `test_research_report.py` still
+passes (markdown/HTML/block model unchanged).
+
+### Verification (Bundle C2)
+
+`cd frontend && npm run lint && npm run build` pass clean (all 11 routes
+compile). `test_research_report.py` passes against live data. The API boots and
+real read endpoints return real data: `/extraction-ready` (15 filings with
+exhibit/claim lifecycle), `/reports` (returns only
+`human_reviewed_deterministic` + `reviewed` — drafts/rejected/superseded/failed
+hidden, no public leakage), and `/reports/latest/AVGO` (a reviewed
+Claude-assisted report with no PDF, so no dead PDF link). Protected actions
+still require the session-storage admin token. Next milestone: **Bundle C final
+QA** (portfolio screenshots and demo video, deferred — screenshots are captured
+locally for review only and never committed).
+
 ## Deployment (complete — MVP live)
 
 * **Backend (Render):** `https://earnings-intelligence-os-api.onrender.com`

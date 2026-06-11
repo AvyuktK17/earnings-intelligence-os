@@ -1,27 +1,59 @@
 @import "tailwindcss";
 
 :root {
-  /* Dark institutional terminal palette. A three-level surface hierarchy
-     (background → surface → panel-header) plus hairline white-alpha borders
-     gives the dense terminal depth without heavy outlines. */
-  --background: #0a0d13;
-  --surface: #12161f;
-  --surface-raised: #181d28;
-  --panel-header: #1a1f2b;
-  --edge: #1f2735;
-  --edge-strong: #2a3344;
-  /* Hairline: barely-there white-alpha rule for dense tables and panel splits. */
-  --hairline: rgba(255, 255, 255, 0.07);
-  --hairline-strong: rgba(255, 255, 255, 0.1);
-  --foreground: #d7dde8;
-  --muted: #8b96a8;
-  --faint: #5c6675;
-  --accent: #e8b93e;
-  --positive: #4cc38a;
-  --negative: #e5534b;
-  --info: #539bf5;
-  --warning: #d9883a;
-  --violet: #a371f7;
+  /* Light institutional terminal palette (default). The app follows the OS
+     appearance: light is the default, dark is applied via
+     `@media (prefers-color-scheme: dark)` below. The same three-level surface
+     hierarchy (background → surface → panel-header) plus hairline rules gives
+     the dense terminal depth in both themes. Components reference only these
+     semantic tokens (never hard-coded white/black), so both themes stay
+     consistent and contrast-safe. */
+  color-scheme: light;
+  --background: #ffffff;
+  --surface: #f7f8fa;
+  --surface-raised: #eef1f5;
+  --panel-header: #eff2f6;
+  --edge: #d8dde5;
+  --edge-strong: #c2cad6;
+  /* Hairline: barely-there dark-alpha rule for dense tables and panel splits. */
+  --hairline: rgba(17, 24, 39, 0.09);
+  --hairline-strong: rgba(17, 24, 39, 0.14);
+  --foreground: #111827;
+  --muted: #4b5563;
+  --faint: #6b7280;
+  /* Restrained amber primary accent — darkened for AA contrast on white. */
+  --accent: #a35c00;
+  --positive: #047857;
+  --negative: #dc2626;
+  --info: #2563eb;
+  --warning: #b45309;
+  --violet: #7c3aed;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Dark institutional terminal palette — the established v0 aesthetic.
+       White-alpha hairlines read on the near-black surfaces; the brighter
+       accent/semantic hues carry on a dark background. */
+    color-scheme: dark;
+    --background: #0a0d13;
+    --surface: #12161f;
+    --surface-raised: #181d28;
+    --panel-header: #1a1f2b;
+    --edge: #1f2735;
+    --edge-strong: #2a3344;
+    --hairline: rgba(255, 255, 255, 0.07);
+    --hairline-strong: rgba(255, 255, 255, 0.1);
+    --foreground: #d7dde8;
+    --muted: #8b96a8;
+    --faint: #5c6675;
+    --accent: #e8b93e;
+    --positive: #4cc38a;
+    --negative: #e5534b;
+    --info: #539bf5;
+    --warning: #d9883a;
+    --violet: #a371f7;
+  }
 }
 
 @theme inline {

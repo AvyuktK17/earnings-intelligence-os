@@ -572,5 +572,24 @@ is ever made.
   PDF (branded header, page numbers, shaded financial tables, source appendix,
   disclaimer footer) with no new system dependencies. No backend logic, API
   contracts, secrets, data, or LLM usage changed.
+- **Bundle C2 — v0 institutional terminal redesign, Phase B (complete):**
+  ported the v0 dark-terminal visual language across the remaining workflow and
+  report pages (`/filings`, `/filings/[accessionNumber]`, `/extraction-ready`,
+  `/review-queue`, `/briefs/latest/[ticker]`, `/reports`,
+  `/reports/latest/[ticker]`, `/reports/review`); converted the oversized
+  Extraction Ready cards into a dense action table (preserving the Extract /
+  Promote / Generate-brief / View-brief protected actions) and regrouped the
+  Reports library by ticker (latest prominent, prior versions collapsible).
+  Added an **OS-driven light/dark theme**: `globals.css` defines a light-default
+  token set with a `@media (prefers-color-scheme: dark)` override (no manual
+  theme switcher), components reference only semantic tokens (no hard-coded
+  white/black), and the recharts components read the live tokens so charts,
+  tables, pills, panels, skeletons, empty states, and the cold-start notice
+  work in both themes with safe contrast. Refined the deterministic `fpdf2` PDF
+  renderer (masthead eyebrow + dominant company title, accent-tinted metadata
+  panel, accent section ticks and evidence-quote rules) while keeping built-in
+  fonts, pure-Python deployability, private Storage, and signed download URLs.
+  No backend logic, API contracts, Supabase schema, secrets, GitHub Actions, or
+  LLM usage changed; the only Python touched is the PDF rendering path.
 - **Bundle C (remaining) — final QA:** portfolio screenshots and demo video
   (deferred), plus end-to-end production verification.
