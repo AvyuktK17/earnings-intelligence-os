@@ -9,7 +9,6 @@ import {
 } from "@/lib/api";
 import { ErrorBox, Loading, Panel } from "@/components/Panel";
 import ResearchHeader from "@/components/ResearchHeader";
-import SectionHeader from "@/components/SectionHeader";
 import { SourceBadge } from "@/components/Badges";
 import { EmptyState, LoadingSkeleton } from "@/components/States";
 import { useCompanies } from "@/lib/hooks";
@@ -18,7 +17,7 @@ const CLAIM_TYPES = ["", "factual", "interpretive"];
 const CONFIDENCES = ["", "high", "medium", "low"];
 
 const selectClass =
-  "rounded border border-edge bg-surface-raised px-2 py-1 text-[12px] text-foreground focus:border-accent focus:outline-none";
+  "w-full rounded border border-edge bg-surface-raised px-2 py-1 text-[12px] text-foreground focus:border-accent focus:outline-none";
 
 function ClassBadge({ value }: { value: string | null }) {
   if (!value) return null;
@@ -28,7 +27,7 @@ function ClassBadge({ value }: { value: string | null }) {
       : "text-accent border-accent/40";
   return (
     <span
-      className={`inline-block rounded border px-1.5 py-px font-mono text-[11px] leading-4 ${style}`}
+      className={`inline-block rounded border px-1.5 py-px font-mono text-[10px] uppercase tracking-wide leading-4 ${style}`}
     >
       {value}
     </span>
@@ -39,38 +38,46 @@ function ReviewedBadge({ value }: { value: boolean | string | null }) {
   const reviewed = value === true || value === "true" || value === "Yes";
   if (!reviewed) return null;
   return (
-    <span className="inline-block rounded border border-positive/40 px-1.5 py-px font-mono text-[11px] leading-4 text-positive">
+    <span className="inline-block rounded border border-positive/40 px-1.5 py-px font-mono text-[10px] uppercase tracking-wide leading-4 text-positive">
       reviewed
     </span>
   );
 }
 
-function EvidenceCard({ item }: { item: EvidenceItem }) {
-  const [open, setOpen] = useState(false);
+/** Right pane: the selected claim with excerpt, provenance chain, source chunk. */
+function ClaimDetail({ item }: { item: EvidenceItem }) {
   const [detail, setDetail] = useState<EvidenceDetail | null>(null);
-  const [loadingDetail, setLoadingDetail] = useState(false);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  async function toggle() {
-    const next = !open;
-    setOpen(next);
-    if (next && !detail) {
-      setLoadingDetail(true);
-      setDetailError(null);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setDetail(null);
+      setError(null);
+      setLoading(true);
       try {
-        setDetail(await api.getEvidenceDetail(item.qualitative_claim_id));
+        const d = await api.getEvidenceDetail(item.qualitative_claim_id);
+        if (!cancelled) setDetail(d);
       } catch (err) {
-        setDetailError(err instanceof Error ? err.message : "Failed to load.");
+        if (!cancelled)
+          setError(err instanceof Error ? err.message : "Failed to load.");
       } finally {
-        setLoadingDetail(false);
+        if (!cancelled) setLoading(false);
       }
     }
-  }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [item.qualitative_claim_id]);
 
   return (
-    <div className="rounded-md border border-edge bg-surface">
-      <div className="flex flex-wrap items-center gap-2 border-b border-edge px-3 py-2 text-[12px]">
-        <span className="font-mono font-semibold text-accent">{item.ticker}</span>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+        <span className="font-mono font-semibold text-accent">
+          {item.ticker}
+        </span>
         <span className="text-muted">{item.theme}</span>
         <ClassBadge value={item.factual_or_interpretive} />
         <span className="font-mono text-faint">conf {item.confidence ?? "—"}</span>
@@ -79,59 +86,57 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
           claim #{item.qualitative_claim_id}
         </span>
       </div>
-      <div className="px-3 py-2.5">
-        <p className="text-[13.5px] text-foreground">{item.claim}</p>
-        {item.supporting_excerpt && (
-          <blockquote className="mt-2 border-l-2 border-accent/40 pl-2.5 text-[12.5px] italic text-muted">
-            {item.supporting_excerpt.length > 240 && !open
-              ? `${item.supporting_excerpt.slice(0, 240)}…`
-              : item.supporting_excerpt}
-          </blockquote>
-        )}
 
-        {/* Provenance is made visually prominent on its own row. */}
-        <div className="mt-2.5 rounded border border-edge/70 bg-surface-raised px-2.5 py-1.5">
+      <p className="text-[13.5px] leading-relaxed text-foreground">
+        {item.claim}
+      </p>
+
+      {item.supporting_excerpt && (
+        <div>
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-faint">
-            Source provenance
+            Supporting excerpt
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <SourceBadge
-              accession={item.accession_number}
-              documentKey={item.document_key}
-              chunkId={item.source_chunk_id}
-              secUrl={item.sec_url}
-              filingDate={item.filing_date}
-            />
-            <button
-              onClick={toggle}
-              className="ml-auto whitespace-nowrap rounded border border-edge px-1.5 py-px text-[11px] text-info transition-colors hover:bg-info/10"
-              aria-expanded={open}
-            >
-              {open ? "Hide source text" : "Show source chunk"}
-            </button>
-          </div>
+          <blockquote className="border-l-2 border-accent/40 pl-2.5 text-[12.5px] italic leading-relaxed text-muted">
+            “{item.supporting_excerpt}”
+          </blockquote>
         </div>
+      )}
 
-        {open && (
-          <div className="mt-3 rounded border border-edge bg-background px-3 py-2.5">
-            {loadingDetail && <Loading label="Loading source chunk…" />}
-            {detailError && <ErrorBox message={detailError} />}
-            {detail && (
-              <>
-                <div className="mb-1.5 flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-[11px] text-faint">
-                  {detail.document?.filename && (
-                    <span>doc: {detail.document.filename}</span>
-                  )}
-                  {detail.filing?.form && <span>{detail.filing.form}</span>}
-                  {detail.filing?.report_date && (
-                    <span>report {detail.filing.report_date}</span>
-                  )}
-                </div>
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-[12px] leading-relaxed text-muted">
-                  {detail.chunk_text ?? "No chunk text available."}
-                </pre>
-              </>
-            )}
+      {/* Provenance chain */}
+      <div className="rounded border border-hairline bg-surface-raised px-2.5 py-2">
+        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-faint">
+          Provenance chain
+        </div>
+        <SourceBadge
+          accession={item.accession_number}
+          documentKey={item.document_key}
+          chunkId={item.source_chunk_id}
+          secUrl={item.sec_url}
+          filingDate={item.filing_date}
+        />
+      </div>
+
+      {/* Source chunk */}
+      <div>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-faint">
+          Source chunk
+        </div>
+        {loading && <Loading label="Loading source chunk…" />}
+        {error && <ErrorBox message={error} />}
+        {detail && (
+          <div className="rounded border border-hairline bg-background px-3 py-2.5">
+            <div className="mb-1.5 flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-[11px] text-faint">
+              {detail.document?.filename && (
+                <span>doc: {detail.document.filename}</span>
+              )}
+              {detail.filing?.form && <span>{detail.filing.form}</span>}
+              {detail.filing?.report_date && (
+                <span>report {detail.filing.report_date}</span>
+              )}
+            </div>
+            <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap text-[12px] leading-relaxed text-muted">
+              {detail.chunk_text ?? "No chunk text available."}
+            </pre>
           </div>
         )}
       </div>
@@ -145,6 +150,7 @@ function EvidenceExplorer() {
   const [items, setItems] = useState<EvidenceItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
 
   const [ticker, setTicker] = useState(searchParams.get("ticker") ?? "");
   const [theme, setTheme] = useState("");
@@ -198,6 +204,17 @@ function EvidenceExplorer() {
     );
   }, [items, text]);
 
+  // Resolve the effective selection during render: honor the clicked id when it
+  // is still in the filtered list, otherwise fall back to the first match. This
+  // avoids a selection-syncing effect (and its cascading-render lint warning).
+  const effectiveId =
+    selectedId != null &&
+    filtered.some((i) => i.qualitative_claim_id === selectedId)
+      ? selectedId
+      : (filtered[0]?.qualitative_claim_id ?? null);
+  const selected =
+    filtered.find((i) => i.qualitative_claim_id === effectiveId) ?? null;
+
   return (
     <div className="space-y-5">
       <ResearchHeader
@@ -206,92 +223,169 @@ function EvidenceExplorer() {
         description="Trusted, human-reviewed claims linked to the exact SEC filing chunk they were grounded in. Pending, rejected, and ungrounded drafts never appear here."
       />
 
-      <Panel title="Filters">
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            aria-label="Ticker"
-            value={ticker}
-            onChange={(e) => setTicker(e.target.value)}
-            className={selectClass}
-          >
-            <option value="">All tickers</option>
-            {companies.map((c) => (
-              <option key={c.ticker} value={c.ticker}>
-                {c.ticker}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Theme"
-            value={theme}
-            onChange={(e) => setTheme(e.target.value)}
-            className={selectClass}
-          >
-            <option value="">All themes</option>
-            {themes.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Claim type"
-            value={claimType}
-            onChange={(e) => setClaimType(e.target.value)}
-            className={selectClass}
-          >
-            {CLAIM_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t || "All types"}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Confidence"
-            value={confidence}
-            onChange={(e) => setConfidence(e.target.value)}
-            className={selectClass}
-          >
-            {CONFIDENCES.map((t) => (
-              <option key={t} value={t}>
-                {t || "All confidence"}
-              </option>
-            ))}
-          </select>
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Search claim text, theme, or excerpt…"
-            aria-label="Search"
-            className="min-w-[220px] flex-1 rounded border border-edge bg-surface-raised px-2 py-1 text-[12px] text-foreground placeholder:text-faint focus:border-accent focus:outline-none"
-          />
-        </div>
-      </Panel>
-
       {error && <ErrorBox message={error} />}
-      {loading && !error && <LoadingSkeleton rows={5} withCards={false} />}
+      {loading && !error && <LoadingSkeleton rows={6} />}
 
       {items && !loading && (
-        <>
-          <SectionHeader
-            label={text ? `Matching “${text}”` : "Trusted evidence"}
-            count={filtered.length}
-          />
-          {filtered.length === 0 ? (
-            <EmptyState
-              title="No trusted evidence matches these filters."
-              hint="Clear a filter, or extract → review → promote claims to populate the evidence layer."
-            />
-          ) : (
-            <div className="space-y-3">
-              {filtered.map((item) => (
-                <EvidenceCard key={item.qualitative_claim_id} item={item} />
-              ))}
+        <div className="grid gap-4 lg:grid-cols-[210px_minmax(0,1fr)_minmax(0,460px)]">
+          {/* Left: compact filters */}
+          <Panel title="Filters">
+            <div className="space-y-2.5">
+              <Filter label="Ticker">
+                <select
+                  aria-label="Ticker"
+                  value={ticker}
+                  onChange={(e) => setTicker(e.target.value)}
+                  className={selectClass}
+                >
+                  <option value="">All tickers</option>
+                  {companies.map((c) => (
+                    <option key={c.ticker} value={c.ticker}>
+                      {c.ticker}
+                    </option>
+                  ))}
+                </select>
+              </Filter>
+              <Filter label="Theme">
+                <select
+                  aria-label="Theme"
+                  value={theme}
+                  onChange={(e) => setTheme(e.target.value)}
+                  className={selectClass}
+                >
+                  <option value="">All themes</option>
+                  {themes.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </Filter>
+              <Filter label="Claim type">
+                <select
+                  aria-label="Claim type"
+                  value={claimType}
+                  onChange={(e) => setClaimType(e.target.value)}
+                  className={selectClass}
+                >
+                  {CLAIM_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t || "All types"}
+                    </option>
+                  ))}
+                </select>
+              </Filter>
+              <Filter label="Confidence">
+                <select
+                  aria-label="Confidence"
+                  value={confidence}
+                  onChange={(e) => setConfidence(e.target.value)}
+                  className={selectClass}
+                >
+                  {CONFIDENCES.map((t) => (
+                    <option key={t} value={t}>
+                      {t || "All confidence"}
+                    </option>
+                  ))}
+                </select>
+              </Filter>
+              <Filter label="Search">
+                <input
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="Claim, theme, excerpt…"
+                  aria-label="Search"
+                  className={selectClass}
+                />
+              </Filter>
             </div>
-          )}
-        </>
+          </Panel>
+
+          {/* Center: claim list */}
+          <Panel
+            title={text ? `Matching “${text}”` : "Trusted claims"}
+            actions={
+              <span className="font-mono text-[11px] text-faint">
+                {filtered.length} claims
+              </span>
+            }
+          >
+            {filtered.length === 0 ? (
+              <EmptyState
+                title="No trusted evidence matches these filters."
+                hint="Clear a filter, or extract → review → promote claims to populate the evidence layer."
+              />
+            ) : (
+              <ul className="max-h-[640px] space-y-1.5 overflow-y-auto pr-0.5">
+                {filtered.map((item) => {
+                  const active = item.qualitative_claim_id === effectiveId;
+                  return (
+                    <li key={item.qualitative_claim_id}>
+                      <button
+                        onClick={() =>
+                          setSelectedId(item.qualitative_claim_id)
+                        }
+                        className={`w-full rounded border px-2.5 py-2 text-left transition-colors ${
+                          active
+                            ? "border-accent/50 bg-accent/5"
+                            : "border-hairline hover:border-hairline-strong hover:bg-surface-raised/60"
+                        }`}
+                      >
+                        <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px]">
+                          <span className="font-mono font-semibold text-accent">
+                            {item.ticker}
+                          </span>
+                          <span className="text-muted">{item.theme}</span>
+                          <span className="ml-auto font-mono text-faint">
+                            #{item.qualitative_claim_id}
+                          </span>
+                        </div>
+                        <p
+                          className={`line-clamp-2 text-[12.5px] leading-snug ${
+                            active ? "text-foreground" : "text-muted"
+                          }`}
+                        >
+                          {item.claim}
+                        </p>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Panel>
+
+          {/* Right: selected claim detail */}
+          <Panel title="Selected claim">
+            {selected ? (
+              <ClaimDetail item={selected} />
+            ) : (
+              <p className="py-6 text-center text-[12px] text-faint">
+                Select a claim to view its excerpt, provenance chain, and source
+                chunk.
+              </p>
+            )}
+          </Panel>
+        </div>
       )}
     </div>
+  );
+}
+
+function Filter({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-faint">
+        {label}
+      </span>
+      {children}
+    </label>
   );
 }
 

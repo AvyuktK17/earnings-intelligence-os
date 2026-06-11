@@ -17,7 +17,7 @@ import { ErrorBox, Panel } from "@/components/Panel";
 import ResearchHeader from "@/components/ResearchHeader";
 import MetricCard from "@/components/MetricCard";
 import StatusPill from "@/components/StatusPill";
-import { ReportTypeBadge } from "@/components/Badges";
+import { ReportTypeBadge, SourceBadge } from "@/components/Badges";
 import { DataTable, TH, THead, TR, TD } from "@/components/DataTable";
 import { EmptyState, LoadingSkeleton } from "@/components/States";
 import { TrendLineChart } from "@/components/charts";
@@ -263,6 +263,27 @@ export default function CompanyPage({
                 </div>
               )}
 
+              {hasFinancials && (
+                <Panel
+                  title="Revenue trajectory — quarterly"
+                  actions={
+                    <button
+                      onClick={() => setTab("Financials")}
+                      className="text-[12px] text-info hover:text-accent hover:underline"
+                    >
+                      All charts →
+                    </button>
+                  }
+                >
+                  <TrendLineChart
+                    data={revenueData}
+                    lines={[{ key: "Revenue", color: "#e8b93e" }]}
+                    format={formatUSD}
+                    height={200}
+                  />
+                </Panel>
+              )}
+
               {peer && (
                 <Panel
                   title="Valuation snapshot"
@@ -287,25 +308,87 @@ export default function CompanyPage({
                 </Panel>
               )}
 
-              <Panel title="Trusted-claim summary">
-                {evidence.length > 0 ? (
-                  <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[13px]">
-                    <span className="font-mono text-positive">
-                      {evidence.length} trusted claims
-                    </span>
+              <div className="grid gap-4 lg:grid-cols-3">
+                <Panel
+                  title={`Latest trusted evidence · ${evidence.length}`}
+                  actions={
                     <Link
                       href={`/evidence?ticker=${encodeURIComponent(ticker)}`}
-                      className="text-info hover:text-accent hover:underline"
+                      className="text-[12px] text-info hover:text-accent hover:underline"
                     >
-                      Open in Evidence Explorer →
+                      Evidence Explorer →
                     </Link>
+                  }
+                >
+                  <div className="lg:col-span-2">
+                    {evidence.length > 0 ? (
+                      <ul className="space-y-2.5">
+                        {evidence.slice(0, 3).map((item) => (
+                          <li
+                            key={item.qualitative_claim_id}
+                            className="border-b border-hairline/60 pb-2.5 last:border-b-0 last:pb-0"
+                          >
+                            <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px]">
+                              <span className="text-muted">{item.theme}</span>
+                              <span className="font-mono text-faint">
+                                conf {item.confidence ?? "—"}
+                              </span>
+                            </div>
+                            <p className="text-[13px] leading-relaxed">
+                              {item.claim}
+                            </p>
+                            <div className="mt-1.5">
+                              <SourceBadge
+                                accession={item.accession_number}
+                                chunkId={item.source_chunk_id}
+                                secUrl={item.sec_url}
+                                filingDate={item.filing_date}
+                              />
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="py-2 text-[12px] text-muted">
+                        No trusted, promoted claims for {ticker} yet.
+                      </p>
+                    )}
                   </div>
-                ) : (
-                  <p className="py-2 text-[12px] text-muted">
-                    No trusted, promoted claims for {ticker} yet.
-                  </p>
-                )}
-              </Panel>
+                </Panel>
+
+                <Panel title="Latest filing">
+                  {detail.recent_filings[0] ? (
+                    <dl className="space-y-2 text-[12.5px]">
+                      <FilingField
+                        label="Form"
+                        value={detail.recent_filings[0].form}
+                      />
+                      <FilingField
+                        label="Filed"
+                        value={detail.recent_filings[0].filing_date ?? "—"}
+                      />
+                      <FilingField
+                        label="Status"
+                        value={detail.recent_filings[0].processing_status}
+                      />
+                      <div className="pt-1">
+                        <Link
+                          href={`/filings/${encodeURIComponent(
+                            detail.recent_filings[0].accession_number,
+                          )}`}
+                          className="font-mono text-[12px] text-info hover:text-accent hover:underline"
+                        >
+                          {detail.recent_filings[0].accession_number} →
+                        </Link>
+                      </div>
+                    </dl>
+                  ) : (
+                    <p className="py-2 text-[12px] text-muted">
+                      No filings tracked yet.
+                    </p>
+                  )}
+                </Panel>
+              </div>
 
               {note && (
                 <Panel title="Comparability notes">
@@ -543,6 +626,15 @@ export default function CompanyPage({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function FilingField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-hairline/60 pb-2 last:border-b-0 last:pb-0">
+      <dt className="text-muted">{label}</dt>
+      <dd className="font-mono tabular-nums text-foreground">{value}</dd>
     </div>
   );
 }

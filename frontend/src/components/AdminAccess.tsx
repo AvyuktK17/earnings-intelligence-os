@@ -81,9 +81,9 @@ export default function AdminAccess() {
   }
 
   return (
-    <div className="border-t border-edge px-3 py-3">
+    <div className="border-t border-hairline px-3 py-3">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">
           Admin Access
         </span>
         <span className="flex items-center gap-1 text-[10px] font-mono">

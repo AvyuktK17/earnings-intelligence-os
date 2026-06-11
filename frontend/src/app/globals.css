@@ -1,11 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0b0e14;
-  --surface: #11151f;
-  --surface-raised: #161c29;
+  /* Dark institutional terminal palette. A three-level surface hierarchy
+     (background → surface → panel-header) plus hairline white-alpha borders
+     gives the dense terminal depth without heavy outlines. */
+  --background: #0a0d13;
+  --surface: #12161f;
+  --surface-raised: #181d28;
+  --panel-header: #1a1f2b;
   --edge: #1f2735;
   --edge-strong: #2a3344;
+  /* Hairline: barely-there white-alpha rule for dense tables and panel splits. */
+  --hairline: rgba(255, 255, 255, 0.07);
+  --hairline-strong: rgba(255, 255, 255, 0.1);
   --foreground: #d7dde8;
   --muted: #8b96a8;
   --faint: #5c6675;
@@ -23,6 +30,9 @@
   --color-surface-raised: var(--surface-raised);
   --color-edge: var(--edge);
   --color-edge-strong: var(--edge-strong);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-panel-header: var(--panel-header);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-faint: var(--faint);
@@ -39,6 +49,13 @@
 body {
   background: var(--background);
   color: var(--foreground);
+  font-feature-settings: "ss01", "cv01";
+}
+
+/* Tabular numerals wherever figures must align in columns. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
 
 /* Page width + spacing tokens for a dense research-terminal layout. The main

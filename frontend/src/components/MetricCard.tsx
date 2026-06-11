@@ -26,7 +26,7 @@ export default function MetricCard({
   tone?: Tone;
 }) {
   return (
-    <div className="rounded-md border border-edge bg-surface px-3.5 py-2.5">
+    <div className="rounded-md border border-hairline bg-surface px-3.5 py-2.5">
       <div className="truncate text-[10px] font-medium uppercase tracking-wider text-muted">
         {label}
       </div>

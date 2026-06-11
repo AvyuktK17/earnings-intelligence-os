@@ -32,7 +32,7 @@ export function DataTable({
 export function THead({ children }: { children: ReactNode }) {
   return (
     <thead>
-      <tr className="border-b border-edge text-[11px] uppercase tracking-wider text-muted">
+      <tr className="border-b border-hairline text-[10px] uppercase tracking-wider text-muted">
         {children}
       </tr>
     </thead>
@@ -67,8 +67,8 @@ export function TR({
 }) {
   return (
     <tr
-      className={`border-b border-edge/50 last:border-b-0 ${
-        hover ? "hover:bg-surface-raised" : ""
+      className={`border-b border-hairline/60 last:border-b-0 ${
+        hover ? "hover:bg-surface-raised/60" : ""
       }`}
     >
       {children}
@@ -86,7 +86,7 @@ export function TD({
   children?: ReactNode;
   right?: boolean;
   mono?: boolean;
-  tone?: "muted" | "faint" | "accent" | "info";
+  tone?: "muted" | "faint" | "accent" | "info" | "positive" | "negative";
   className?: string;
 }) {
   const toneClass =
@@ -98,7 +98,11 @@ export function TD({
           ? "text-accent"
           : tone === "info"
             ? "text-info"
-            : "";
+            : tone === "positive"
+              ? "text-positive"
+              : tone === "negative"
+                ? "text-negative"
+                : "";
   return (
     <td
       className={`py-1.5 pr-3 ${right ? "text-right tabular-nums" : ""} ${

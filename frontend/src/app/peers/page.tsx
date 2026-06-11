@@ -57,6 +57,23 @@ const MULTIPLE_KEYS = new Set<keyof PeerRow>([
   "price_to_ttm_fcf",
 ]);
 
+// Columns where the sign carries financial meaning (green positive / red
+// negative) — growth and yield read as performance states.
+const SIGNED_KEYS = new Set<keyof PeerRow>([
+  "yoy_revenue_growth",
+  "free_cash_flow_yield",
+]);
+
+function cellTone(
+  key: keyof PeerRow,
+  value: number | null,
+): "accent" | "positive" | "negative" | undefined {
+  if (MULTIPLE_KEYS.has(key)) return "accent";
+  if (SIGNED_KEYS.has(key) && value != null)
+    return value > 0 ? "positive" : value < 0 ? "negative" : undefined;
+  return undefined;
+}
+
 export default function PeersPage() {
   const [data, setData] = useState<PeersResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -167,7 +184,7 @@ export default function PeersPage() {
           </ChartPanel>
 
           <Panel title="Peer table — latest reported quarter">
-            <DataTable minWidth={1080} className="text-[12.5px]">
+            <DataTable minWidth={1080} className="tnum text-[12.5px]">
               <thead>
                 <tr className="border-b border-edge text-[11px] uppercase tracking-wider text-muted">
                   <th scope="col" className="py-1.5 pr-3 font-medium">
@@ -226,7 +243,7 @@ export default function PeersPage() {
                         key={String(col.key)}
                         right
                         mono
-                        tone={MULTIPLE_KEYS.has(col.key) ? "accent" : undefined}
+                        tone={cellTone(col.key, row[col.key] as number | null)}
                       >
                         {col.format(row[col.key] as number)}
                       </TD>
@@ -242,6 +259,16 @@ export default function PeersPage() {
           </Panel>
 
           <Panel title="Comparability notes">
+            <details className="group">
+              <summary className="cursor-pointer list-none text-[12px] text-info hover:text-accent">
+                <span className="group-open:hidden">
+                  Show comparability notes ({data.comparability_notes.length}) →
+                </span>
+                <span className="hidden group-open:inline">
+                  Hide comparability notes ↓
+                </span>
+              </summary>
+              <div className="mt-3">
             <ul className="space-y-2 text-[12.5px]">
               {data.comparability_notes.map((note) => (
                 <li key={note.ticker} className="flex flex-wrap gap-2">
@@ -268,6 +295,8 @@ export default function PeersPage() {
               issuers as noted, so leverage-sensitive multiples are not strictly
               like-for-like. This is not a live market feed.
             </p>
+              </div>
+            </details>
           </Panel>
         </>
       )}

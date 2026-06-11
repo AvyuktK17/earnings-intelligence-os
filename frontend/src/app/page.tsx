@@ -21,6 +21,14 @@ import StatusPill from "@/components/StatusPill";
 import { ValuationBadge } from "@/components/ValuationNote";
 import { formatMultiple, formatPercent, formatUSD } from "@/lib/format";
 
+/** Green for positive financial states, red for negative — neutral otherwise. */
+function signTone(value: number | null): "positive" | "negative" | undefined {
+  if (value == null) return undefined;
+  if (value > 0) return "positive";
+  if (value < 0) return "negative";
+  return undefined;
+}
+
 function leader(peers: PeerRow[], key: keyof PeerRow): PeerRow | null {
   const ranked = peers
     .filter((p) => p[key] != null)
@@ -127,44 +135,66 @@ export default function OverviewPage() {
 
       {!loading && overview && (
         <>
-          {/* --- System stats --------------------------------------------- */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-            <MetricCard
-              label="Companies"
-              value={overview.companies_count}
-              hint="monitored watchlist"
-            />
-            <MetricCard
-              label="Filings"
-              value={overview.total_filings_count}
-              hint="all forms, all time"
-            />
-            <MetricCard
-              label="Extraction ready"
-              value={overview.extraction_ready_count}
-              hint="exhibits ingested"
-              tone="info"
-            />
-            <MetricCard
-              label="Pending review"
-              value={overview.pending_grounded_claim_count}
-              hint="grounded drafts"
-              tone={
-                overview.pending_grounded_claim_count > 0 ? "accent" : "default"
+          {/* --- Peer fundamentals (lead) --------------------------------- */}
+          {peers && (
+            <Panel
+              title="Peer fundamentals — latest reported quarter"
+              actions={
+                <Link
+                  href="/peers"
+                  className="text-[12px] text-info hover:text-accent hover:underline"
+                >
+                  Full comparison →
+                </Link>
               }
-            />
-            <MetricCard
-              label="Trusted claims"
-              value={overview.trusted_claim_count}
-              hint="reviewed + promoted"
-              tone="positive"
-            />
-            <MetricCard
-              label="Stored briefs"
-              value={overview.stored_brief_count}
-              hint="versioned"
-            />
-          </div>
+            >
+              <DataTable minWidth={680} className="tnum">
+                <THead>
+                  <TH>Ticker</TH>
+                  <TH>Company</TH>
+                  <TH right>Revenue</TH>
+                  <TH right>YoY</TH>
+                  <TH right>Gross</TH>
+                  <TH right>Op.</TH>
+                  <TH right>EV/Rev</TH>
+                  <TH right>FCF yld</TH>
+                </THead>
+                <tbody>
+                  {peers.peers.map((row) => (
+                    <TR key={row.ticker}>
+                      <TD mono className="font-medium">
+                        <Link
+                          href={`/companies/${encodeURIComponent(row.ticker)}`}
+                          className="text-accent hover:underline"
+                        >
+                          {row.ticker}
+                        </Link>
+                      </TD>
+                      <TD tone="muted">{row.company_name}</TD>
+                      <TD right mono>
+                        {formatUSD(row.revenue)}
+                      </TD>
+                      <TD right mono tone={signTone(row.yoy_revenue_growth)}>
+                        {formatPercent(row.yoy_revenue_growth)}
+                      </TD>
+                      <TD right mono>
+                        {formatPercent(row.gross_margin)}
+                      </TD>
+                      <TD right mono>
+                        {formatPercent(row.operating_margin)}
+                      </TD>
+                      <TD right mono tone="accent">
+                        {formatMultiple(row.ev_to_ttm_revenue)}
+                      </TD>
+                      <TD right mono tone={signTone(row.free_cash_flow_yield)}>
+                        {formatPercent(row.free_cash_flow_yield)}
+                      </TD>
+                    </TR>
+                  ))}
+                </tbody>
+              </DataTable>
+            </Panel>
+          )}
 
           {/* --- Peer leaders --------------------------------------------- */}
           {peers && (
@@ -341,64 +371,46 @@ export default function OverviewPage() {
             </div>
           </div>
 
-          {/* --- Peer fundamentals ---------------------------------------- */}
-          {peers && (
-            <Panel
-              title="Peer fundamentals — latest reported quarter"
-              actions={
-                <Link
-                  href="/peers"
-                  className="text-[12px] text-info hover:text-accent hover:underline"
-                >
-                  Full comparison →
-                </Link>
-              }
-            >
-              <DataTable minWidth={680}>
-                <THead>
-                  <TH>Ticker</TH>
-                  <TH right>Revenue</TH>
-                  <TH right>YoY</TH>
-                  <TH right>Gross</TH>
-                  <TH right>Op.</TH>
-                  <TH right>EV/Rev</TH>
-                  <TH right>FCF yld</TH>
-                </THead>
-                <tbody>
-                  {peers.peers.map((row) => (
-                    <TR key={row.ticker}>
-                      <TD mono className="font-medium">
-                        <Link
-                          href={`/companies/${encodeURIComponent(row.ticker)}`}
-                          className="text-accent hover:underline"
-                        >
-                          {row.ticker}
-                        </Link>
-                      </TD>
-                      <TD right mono>
-                        {formatUSD(row.revenue)}
-                      </TD>
-                      <TD right mono>
-                        {formatPercent(row.yoy_revenue_growth)}
-                      </TD>
-                      <TD right mono>
-                        {formatPercent(row.gross_margin)}
-                      </TD>
-                      <TD right mono>
-                        {formatPercent(row.operating_margin)}
-                      </TD>
-                      <TD right mono tone="accent">
-                        {formatMultiple(row.ev_to_ttm_revenue)}
-                      </TD>
-                      <TD right mono>
-                        {formatPercent(row.free_cash_flow_yield)}
-                      </TD>
-                    </TR>
-                  ))}
-                </tbody>
-              </DataTable>
-            </Panel>
-          )}
+          {/* --- Pipeline status (subordinate to research content) -------- */}
+          <Panel title="Pipeline status">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+              <MetricCard
+                label="Companies"
+                value={overview.companies_count}
+                hint="monitored watchlist"
+              />
+              <MetricCard
+                label="Filings"
+                value={overview.total_filings_count}
+                hint="all forms, all time"
+              />
+              <MetricCard
+                label="Extraction ready"
+                value={overview.extraction_ready_count}
+                hint="exhibits ingested"
+                tone="info"
+              />
+              <MetricCard
+                label="Pending review"
+                value={overview.pending_grounded_claim_count}
+                hint="grounded drafts"
+                tone={
+                  overview.pending_grounded_claim_count > 0 ? "accent" : "default"
+                }
+              />
+              <MetricCard
+                label="Trusted claims"
+                value={overview.trusted_claim_count}
+                hint="reviewed + promoted"
+                tone="positive"
+              />
+              <MetricCard
+                label="Stored briefs"
+                value={overview.stored_brief_count}
+                hint="versioned"
+              />
+            </div>
+          </Panel>
 
           {/* --- Operational panels --------------------------------------- */}
           <div className="grid gap-4 lg:grid-cols-2">

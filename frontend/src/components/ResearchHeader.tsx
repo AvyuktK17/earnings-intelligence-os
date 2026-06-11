@@ -17,18 +17,18 @@ export default function ResearchHeader({
   actions?: ReactNode;
 }) {
   return (
-    <header className="flex flex-wrap items-start justify-between gap-3 border-b border-edge pb-3">
-      <div className="min-w-0">
+    <header className="flex flex-wrap items-start justify-between gap-4 border-b border-hairline pb-3">
+      <div className="min-w-0 space-y-1">
         {eyebrow && (
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-faint">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-faint">
             {eyebrow}
           </div>
         )}
-        <h1 className="mt-0.5 text-lg font-semibold leading-tight text-foreground">
+        <h1 className="text-[16px] font-semibold leading-tight text-foreground">
           {title}
         </h1>
         {description && (
-          <p className="mt-1 max-w-2xl text-[12px] leading-snug text-muted">
+          <p className="max-w-2xl text-[12px] leading-relaxed text-muted">
             {description}
           </p>
         )}

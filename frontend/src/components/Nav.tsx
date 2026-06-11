@@ -75,10 +75,10 @@ export default function Nav() {
       <Link
         href={link.href}
         aria-current={active ? "page" : undefined}
-        className={`block rounded px-3 py-1.5 text-[13px] transition-colors ${
+        className={`block border-l-2 px-3 py-1 text-[13px] transition-colors ${
           active
-            ? "bg-surface-raised font-medium text-accent shadow-[inset_2px_0_0_0_var(--accent)]"
-            : "text-muted hover:bg-surface-raised hover:text-foreground"
+            ? "border-accent bg-accent/5 font-medium text-accent"
+            : "border-transparent text-muted hover:border-hairline-strong hover:text-foreground"
         }`}
       >
         {link.label}
@@ -87,13 +87,13 @@ export default function Nav() {
   }
 
   return (
-    <aside className="flex w-full shrink-0 flex-col border-b border-edge bg-surface lg:min-h-screen lg:w-60 lg:border-b-0 lg:border-r">
-      <div className="border-b border-edge px-4 py-4">
+    <aside className="flex w-full shrink-0 flex-col border-b border-hairline bg-surface lg:min-h-screen lg:w-56 lg:border-b-0 lg:border-r">
+      <div className="border-b border-hairline px-3 py-3">
         <Link href="/" className="block">
-          <div className="text-sm font-semibold tracking-wide">
+          <div className="text-[13px] font-semibold tracking-wide">
             Earnings Intelligence OS
           </div>
-          <div className="mt-0.5 text-[10px] uppercase tracking-[0.18em] text-muted">
+          <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
             Semiconductor Research Terminal
           </div>
         </Link>
@@ -121,10 +121,10 @@ export default function Nav() {
                       aria-current={
                         pathname === `/companies/${ticker}` ? "page" : undefined
                       }
-                      className={`block rounded px-3 py-1 font-mono text-[12px] transition-colors ${
+                      className={`block border-l-2 px-3 py-0.5 font-mono text-[12px] tracking-tight transition-colors ${
                         pathname === `/companies/${ticker}`
-                          ? "bg-surface-raised font-medium text-accent"
-                          : "text-muted hover:bg-surface-raised hover:text-foreground"
+                          ? "border-accent bg-accent/5 font-medium text-accent"
+                          : "border-transparent text-muted hover:border-hairline-strong hover:text-foreground"
                       }`}
                     >
                       {ticker}
@@ -143,7 +143,7 @@ export default function Nav() {
       </nav>
 
       <AdminAccess />
-      <div className="hidden border-t border-edge px-4 py-2.5 font-mono text-[10.5px] text-faint lg:block">
+      <div className="hidden border-t border-hairline px-4 py-2.5 font-mono text-[10.5px] text-faint lg:block">
         live · SEC ingestion + analyst review
       </div>
     </aside>
