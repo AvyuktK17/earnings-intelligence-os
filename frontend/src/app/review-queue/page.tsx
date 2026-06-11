@@ -13,12 +13,72 @@ const inputClass =
   "w-full rounded border border-edge bg-surface-raised px-2 py-1.5 text-[13px] " +
   "text-foreground placeholder-faint focus:border-accent focus:outline-none";
 
+// Sample cards for the read-only demo view shown when the live queue is
+// empty. Based on real, already-reviewed AVGO claims; ids are negative so
+// they can never collide with live data, and no action ever fires in demo
+// mode. Purely presentational — nothing here touches the API or database.
+const DEMO_CLAIMS: ProposedClaim[] = [
+  {
+    id: -1,
+    ticker: "AVGO",
+    accession_number: "0001730168-26-000051",
+    document_key: "exhibit:avgo-05032026x8kxex99.htm",
+    theme: "Revenue",
+    claim_text:
+      "Broadcom's second-quarter revenue was $22,187 million, which is a 48 percent increase from the prior year period.",
+    supporting_excerpt:
+      "Revenue of $22,187 million for the second quarter, up 48 percent from the prior year period",
+    source_chunk_id: 1499,
+    source_chunk_index: 2,
+    claim_type: "factual",
+    confidence: "high",
+    review_status: "pending",
+    created_at: "",
+  },
+  {
+    id: -2,
+    ticker: "AVGO",
+    accession_number: "0001730168-26-000051",
+    document_key: "exhibit:avgo-05032026x8kxex99.htm",
+    theme: "AI Semiconductor Revenue",
+    claim_text:
+      "Q2 semiconductor revenue from AI was $10.8 billion, which grew 143% year-over-year, exceeding Broadcom's forecast, driven by increasing demand for custom AI accelerators and AI networking.",
+    supporting_excerpt:
+      "Q2 semiconductor revenue from AI of $10.8 billion grew 143% year-over-year, above our forecast, driven by increasing demand for custom AI accelerators and AI networking",
+    source_chunk_id: 1499,
+    source_chunk_index: 2,
+    claim_type: "factual",
+    confidence: "high",
+    review_status: "pending",
+    created_at: "",
+  },
+  {
+    id: -3,
+    ticker: "AVGO",
+    accession_number: "0001730168-26-000051",
+    document_key: "exhibit:avgo-05032026x8kxex99.htm",
+    theme: "Revenue Guidance",
+    claim_text:
+      "Broadcom expects third quarter fiscal year 2026 revenue to be approximately $29.4 billion, an increase of 84 percent from the prior year period.",
+    supporting_excerpt:
+      "Third quarter fiscal year 2026 revenue guidance of approximately $29.4 billion, an increase of 84 percent from the prior year period",
+    source_chunk_id: 1499,
+    source_chunk_index: 2,
+    claim_type: "factual",
+    confidence: "high",
+    review_status: "pending",
+    created_at: "",
+  },
+];
+
 function ClaimCard({
   claim,
   onDone,
+  demo = false,
 }: {
   claim: ProposedClaim;
   onDone: (message: string) => void;
+  demo?: boolean;
 }) {
   const [mode, setMode] = useState<"idle" | "approve" | "edit" | "reject">(
     "idle",
@@ -43,6 +103,11 @@ function ClaimCard({
   return (
     <div className="rounded-md border border-edge bg-surface p-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-muted">
+        {demo && (
+          <span className="rounded border border-accent/50 px-1.5 font-semibold text-accent">
+            DEMO
+          </span>
+        )}
         <span className="font-medium text-accent">{claim.ticker}</span>
         <span>{claim.accession_number}</span>
         <span>{claim.document_key}</span>
@@ -72,25 +137,36 @@ function ClaimCard({
       )}
 
       {mode === "idle" && (
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
+            disabled={demo}
+            title={demo ? "Disabled in demo view" : undefined}
             className={`${buttonClass} border-positive/50 text-positive hover:bg-positive/10`}
             onClick={() => setMode("approve")}
           >
             Approve
           </button>
           <button
+            disabled={demo}
+            title={demo ? "Disabled in demo view" : undefined}
             className={`${buttonClass} border-accent/50 text-accent hover:bg-accent/10`}
             onClick={() => setMode("edit")}
           >
             Edit &amp; Approve
           </button>
           <button
+            disabled={demo}
+            title={demo ? "Disabled in demo view" : undefined}
             className={`${buttonClass} border-negative/50 text-negative hover:bg-negative/10`}
             onClick={() => setMode("reject")}
           >
             Reject
           </button>
+          {demo && (
+            <span className="font-mono text-[11px] text-faint">
+              demo view · actions disabled
+            </span>
+          )}
         </div>
       )}
 
@@ -177,6 +253,7 @@ export default function ReviewQueuePage() {
   const [loading, setLoading] = useState(true);
   const [promoting, setPromoting] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [demo, setDemo] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -250,29 +327,82 @@ export default function ReviewQueuePage() {
         eyebrow="Workflow"
         title="Review Queue"
         description="Grounded AI-drafted claims awaiting analyst review — nothing enters trusted research without approval."
+        actions={
+          <button
+            className={`${buttonClass} ${
+              demo
+                ? "border-accent/50 text-accent"
+                : "border-edge text-muted hover:border-accent hover:text-accent"
+            }`}
+            onClick={() => setDemo((d) => !d)}
+          >
+            {demo ? "Hide demo workflow" : "View demo workflow"}
+          </button>
+        }
       />
 
       {flash && <SuccessNote message={flash} />}
       {error && <ErrorBox message={error} />}
       {loading && <LoadingSkeleton rows={4} withCards={false} />}
 
-      {!loading && claims && claims.length === 0 && (
-        <EmptyState
-          title="The review queue is empty."
-          hint={
-            <>
-              New grounded claims appear here after a manual extraction run.
-              Reviewed claims can be promoted and published via the{" "}
-              <Link
-                href="/briefs/latest/AVGO"
-                className="text-info hover:underline"
-              >
-                latest brief
-              </Link>
-              .
-            </>
+      {!loading && claims && claims.length === 0 && !demo && (
+        <>
+          <EmptyState
+            title="The review queue is empty — every drafted claim has been reviewed."
+            hint={
+              <>
+                New grounded claims appear here after a manual extraction run.
+                Reviewed claims can be promoted and published via the{" "}
+                <Link
+                  href="/briefs/latest/AVGO"
+                  className="text-info hover:underline"
+                >
+                  latest brief
+                </Link>
+                .
+              </>
+            }
+          />
+          <button
+            className={`${buttonClass} border-edge text-muted hover:border-accent hover:text-accent`}
+            onClick={() => setDemo(true)}
+          >
+            View a demo of the review workflow
+          </button>
+        </>
+      )}
+
+      {demo && (
+        <Panel
+          title="DEMO · what an analyst sees when claims await review"
+          actions={
+            <button
+              className={`${buttonClass} border-edge text-muted hover:bg-surface-raised`}
+              onClick={() => setDemo(false)}
+            >
+              Exit demo
+            </button>
           }
-        />
+        >
+          <p className="mb-3 text-[12px] leading-relaxed text-muted">
+            This read-only panel illustrates the analyst approval gate for
+            visitors and recruiters. The sample cards below are based on
+            real, already-reviewed Broadcom claims. In a live queue each
+            AI-drafted claim shows its literal source excerpt, and the
+            analyst approves, edits, or rejects it — actions are disabled
+            here and nothing is written anywhere.
+          </p>
+          <div className="space-y-3">
+            {DEMO_CLAIMS.map((claim) => (
+              <ClaimCard
+                key={claim.id}
+                claim={claim}
+                onDone={() => {}}
+                demo
+              />
+            ))}
+          </div>
+        </Panel>
       )}
 
       {!loading &&
