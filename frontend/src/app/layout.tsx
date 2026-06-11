@@ -14,9 +14,28 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// metadataBase makes the social-preview image URL absolute, so LinkedIn,
+// X, and Slack render a rich link card. The opengraph-image.png next to
+// this file is picked up by Next automatically for og:image/twitter:image.
 export const metadata: Metadata = {
+  metadataBase: new URL("https://earnings-intelligence-os.vercel.app"),
   title: "Earnings Intelligence OS",
-  description: "Semiconductor Research Terminal",
+  description:
+    "Evidence-grounded semiconductor equity research: AI drafts claims from SEC filings, humans approve them, and every published sentence links to its exact source.",
+  openGraph: {
+    title: "Earnings Intelligence OS",
+    description:
+      "AI drafts, humans approve. A semiconductor research terminal where every claim is grounded in a literal SEC-filing quote.",
+    url: "/",
+    siteName: "Earnings Intelligence OS",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Earnings Intelligence OS",
+    description:
+      "AI drafts, humans approve. A semiconductor research terminal where every claim is grounded in a literal SEC-filing quote.",
+  },
 };
 
 export default function RootLayout({

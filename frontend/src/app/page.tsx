@@ -130,6 +130,13 @@ export default function OverviewPage() {
         actions={<ValuationBadge date={snapshotDate} />}
       />
 
+      <p className="-mt-2 text-[12px] text-faint">
+        First time here?{" "}
+        <Link href="/about" className="text-accent hover:underline">
+          How this works — the evidence-grounded pipeline →
+        </Link>
+      </p>
+
       {error && <ErrorBox message={error} />}
       {loading && !error && <LoadingSkeleton rows={6} />}
 
