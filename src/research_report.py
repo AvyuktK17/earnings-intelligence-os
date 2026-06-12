@@ -270,6 +270,7 @@ def _peer_context(supabase) -> list[dict]:
     companies = (
         supabase.table("companies")
         .select("ticker, company_name, business_model")
+        .eq("coverage_tier", "acquirer")
         .order("ticker")
         .execute()
         .data
@@ -347,6 +348,7 @@ def generate_research_report(
         supabase.table("companies")
         .select("ticker, company_name, cik, business_model")
         .eq("ticker", ticker)
+        .eq("coverage_tier", "acquirer")
         .execute()
         .data
     )

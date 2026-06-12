@@ -276,6 +276,7 @@ def list_companies() -> dict:
         _supabase()
         .table("companies")
         .select("ticker, company_name, cik, business_model")
+        .eq("coverage_tier", "acquirer")
         .order("ticker", desc=False)
         .execute()
         .data
@@ -418,6 +419,7 @@ def get_overview() -> dict:
     companies = (
         supabase.table("companies")
         .select("ticker, company_name")
+        .eq("coverage_tier", "acquirer")
         .order("ticker", desc=False)
         .execute()
         .data
@@ -638,6 +640,7 @@ def get_peers() -> dict:
     companies = (
         supabase.table("companies")
         .select("ticker, company_name, cik, business_model")
+        .eq("coverage_tier", "acquirer")
         .order("ticker", desc=False)
         .execute()
         .data
@@ -682,6 +685,7 @@ def get_peer_trends(
     companies = (
         supabase.table("companies")
         .select("ticker, company_name")
+        .eq("coverage_tier", "acquirer")
         .order("ticker", desc=False)
         .execute()
         .data

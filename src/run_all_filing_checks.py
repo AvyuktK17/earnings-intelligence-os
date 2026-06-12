@@ -18,7 +18,12 @@ def run_all_filing_checks(
     """
     supabase = get_supabase_client()
 
-    response = supabase.table("companies").select("ticker, cik").execute()
+    response = (
+        supabase.table("companies")
+        .select("ticker, cik")
+        .eq("coverage_tier", "acquirer")
+        .execute()
+    )
     companies = response.data
 
     results = []

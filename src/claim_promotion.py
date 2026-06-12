@@ -38,7 +38,12 @@ def promote_reviewed_claims(
     supabase = get_supabase_client()
 
     # Build a ticker → company_name lookup from the companies table.
-    companies_resp = supabase.table("companies").select("ticker, company_name").execute()
+    companies_resp = (
+        supabase.table("companies")
+        .select("ticker, company_name")
+        .eq("coverage_tier", "acquirer")
+        .execute()
+    )
     company_map = {r["ticker"]: r["company_name"] for r in companies_resp.data}
 
     # Fetch eligible proposed claims: approved or edited, grounded,
